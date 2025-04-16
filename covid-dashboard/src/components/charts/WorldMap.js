@@ -7,20 +7,18 @@ import { colorScales } from '../../constants/colorScales';
 import '../../styles/components/charts.css';
 import { geoPath, geoMercator } from 'd3-geo';
 
-
 const WorldMap = ({
   data,
   width = 960,
   height = 500,
   margin = { top: 10, right: 10, bottom: 10, left: 10 },
   metric = 'cases',
-  colorRange = colorScales.cases,
-  onCountryClick = () => {}
+  colorRange = colorScales?.cases || ['#f7fbff', '#08519c'], // Add fallback colors
+  onCountryClick = () => { }
 }) => {
   const mapRef = useRef();
   const tooltipRef = useRef();
   const [worldData, setWorldData] = useState(null);
-  // eslint-disable-next-line no-unused-vars
   const [selectedCountry, setSelectedCountry] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -66,10 +64,16 @@ const WorldMap = ({
       return null;
     }
 
+    // Check if colorRange is valid before using it
+    const defaultColors = ['#f7fbff', '#08519c']; // Blue gradient as fallback
+    const colors = Array.isArray(colorRange) && colorRange.length >= 2
+      ? colorRange
+      : defaultColors;
+
     // Create color scale based on data range
     const colorScale = d3.scaleSequential()
       .domain([0, d3.max(dataValues) || 0])
-      .interpolator(d3.interpolate(colorRange[0], colorRange[1]));
+      .interpolator(d3.interpolate(colors[0], colors[1]));
 
     // Set up projection
     const projection = d3.geoMercator()
@@ -110,17 +114,17 @@ const WorldMap = ({
       .attr('fill', d => {
         const countryCode = d.properties.iso_a3 || d.properties.ISO_A3;
         let countryData;
-        
+
         // Support both object and array data formats
         if (data[countryCode]) {
           countryData = data[countryCode];
         } else if (Array.isArray(data)) {
-          countryData = data.find(c => 
-            c.country === d.properties.name || 
+          countryData = data.find(c =>
+            c.country === d.properties.name ||
             c.countryInfo?.iso3 === countryCode
           );
         }
-        
+
         return countryData && countryData[metric] !== undefined
           ? colorScale(countryData[metric])
           : theme === 'dark' ? '#2a2a2a' : '#ddd';
@@ -131,21 +135,21 @@ const WorldMap = ({
       .on('mouseover', (event, d) => {
         const countryCode = d.properties.iso_a3 || d.properties.ISO_A3;
         let countryData;
-        
+
         if (data[countryCode]) {
           countryData = data[countryCode];
         } else if (Array.isArray(data)) {
-          countryData = data.find(c => 
-            c.country === d.properties.name || 
+          countryData = data.find(c =>
+            c.country === d.properties.name ||
             c.countryInfo?.iso3 === countryCode
           );
         }
-        
+
         setSelectedCountry(d.properties.name);
         d3.select(event.currentTarget)
           .attr('stroke', theme === 'dark' ? '#fff' : '#000')
           .attr('stroke-width', 1.5);
-          
+
         tooltip
           .style('opacity', 1)
           .style('left', `${event.pageX + 10}px`)
@@ -170,16 +174,16 @@ const WorldMap = ({
       .on('click', (event, d) => {
         const countryCode = d.properties.iso_a3 || d.properties.ISO_A3;
         let countryData;
-        
+
         if (data[countryCode]) {
           countryData = data[countryCode];
         } else if (Array.isArray(data)) {
-          countryData = data.find(c => 
-            c.country === d.properties.name || 
+          countryData = data.find(c =>
+            c.country === d.properties.name ||
             c.countryInfo?.iso3 === countryCode
           );
         }
-        
+
         if (countryData) {
           onCountryClick({
             ...countryData,
