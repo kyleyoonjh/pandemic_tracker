@@ -1,5 +1,5 @@
 // src/components/charts/BarChart.js
-import React, { useRef, useEffect, useState, useMemo } from 'react';
+/*import React, { useRef, useEffect, useState, useMemo } from 'react';
 import * as d3 from 'd3';
 import { useSelector } from 'react-redux';
 import { formatNumber } from '../../utils/formatters';
@@ -349,3 +349,224 @@ const BarChart = ({
 };
 
 export default React.memo(BarChart);
+*/
+
+
+
+// src/components/charts/BarChart.js
+// src/components/charts/BarChart.js
+
+import React, { useEffect, useRef } from 'react';
+import * as d3 from 'd3';
+import '../../styles/components/charts.css';
+
+const BarChart = ({
+  data,
+  xLabel = '',
+  yLabel = '',
+  title = '',
+  color = '#4285F4',
+  colors,
+  horizontal = false,
+  height = 300,
+  derivative = false,
+  margin = { top: 30, right: 30, bottom: 50, left: 60 }
+}) => {
+  const chartRef = useRef(null);
+  
+  // Make sure colors exists, otherwise use the single color
+  const colorArray = colors && Array.isArray(colors) && colors.length > 0 
+    ? colors 
+    : color 
+      ? [color] 
+      : ['#4285F4']; // Fallback color if both color and colors are undefined
+  
+  useEffect(() => {
+    // Enhanced validation to prevent errors
+    if (!chartRef.current) return;
+    if (!data) {
+      console.error("Chart data is undefined or null");
+      return;
+    }
+    if (!Array.isArray(data)) {
+      console.error("Chart data is not an array:", data);
+      return;
+    }
+    if (data.length === 0) {
+      console.error("Chart data array is empty");
+      return;
+    }
+    
+    // Clear previous chart
+    d3.select(chartRef.current).selectAll('*').remove();
+    
+    const width = chartRef.current.clientWidth;
+    
+    // Set up the SVG
+    const svg = d3.select(chartRef.current)
+      .append('svg')
+      .attr('width', width)
+      .attr('height', height)
+      .append('g')
+      .attr('transform', `translate(${margin.left}, ${margin.top})`);
+    
+    const chartWidth = width - margin.left - margin.right;
+    const chartHeight = height - margin.top - margin.bottom;
+    
+    // Process data for derivative if needed - with validation
+    let chartData = [...data]; // Create a copy to avoid mutations
+    
+    if (derivative && Array.isArray(data)) {
+      chartData = data.map((d, i) => {
+        if (i === 0) return { ...d, value: 0 };
+        return { ...d, value: d.value - data[i-1].value };
+      }).filter(d => d.value > 0); // Only show positive derivatives
+      
+      // If after filtering we have no data, exit early
+      if (chartData.length === 0) {
+        console.warn("No positive derivatives found in the data");
+        return;
+      }
+    }
+    
+    // Safe accessor function for getting labels
+    const getLabel = (d) => {
+      return (d && (d.label || d.name || d.date || '')).toString();
+    };
+    
+    // Safe accessor function for getting values
+    const getValue = (d) => {
+      return d && typeof d.value === 'number' ? d.value : 0;
+    };
+    
+    // Handle different data formats
+    if (horizontal) {
+      try {
+        // For horizontal bars (e.g., country comparisons)
+        const xScale = d3.scaleLinear()
+          .domain([0, d3.max(chartData, getValue)])
+          .range([0, chartWidth]);
+        
+        const yScale = d3.scaleBand()
+          .domain(chartData.map(getLabel))
+          .range([0, chartHeight])
+          .padding(0.1);
+        
+        // X axis
+        svg.append('g')
+          .attr('transform', `translate(0, ${chartHeight})`)
+          .call(d3.axisBottom(xScale).ticks(5))
+          .append('text')
+          .attr('fill', '#666')
+          .attr('x', chartWidth / 2)
+          .attr('y', 40)
+          .attr('text-anchor', 'middle')
+          .text(xLabel);
+        
+        // Y axis
+        svg.append('g')
+          .call(d3.axisLeft(yScale))
+          .append('text')
+          .attr('fill', '#666')
+          .attr('transform', 'rotate(-90)')
+          .attr('y', -40)
+          .attr('x', -chartHeight / 2)
+          .attr('text-anchor', 'middle')
+          .text(yLabel);
+        
+        // Draw bars
+        svg.selectAll('rect')
+          .data(chartData)
+          .enter()
+          .append('rect')
+          .attr('y', d => yScale(getLabel(d)))
+          .attr('height', yScale.bandwidth())
+          .attr('x', 0)
+          .attr('width', d => xScale(getValue(d)))
+          .attr('fill', (d, i) => colorArray[i % colorArray.length]);
+      } catch (error) {
+        console.error("Error rendering horizontal bar chart:", error);
+      }
+    } else {
+      try {
+        // For vertical bars (e.g., time series)
+        const xScale = d3.scaleBand()
+          .domain(chartData.map(getLabel))
+          .range([0, chartWidth])
+          .padding(0.1);
+        
+        const yScale = d3.scaleLinear()
+          .domain([0, d3.max(chartData, getValue)])
+          .range([chartHeight, 0]);
+        
+        // X axis
+        svg.append('g')
+          .attr('transform', `translate(0, ${chartHeight})`)
+          .call(d3.axisBottom(xScale).tickValues(
+            xScale.domain().filter((_, i) => i % Math.ceil(chartData.length / 10) === 0)
+          ))
+          .selectAll('text')
+          .attr('transform', 'rotate(-45)')
+          .style('text-anchor', 'end');
+        
+        svg.append('text')
+          .attr('fill', '#666')
+          .attr('x', chartWidth / 2)
+          .attr('y', chartHeight + 40)
+          .attr('text-anchor', 'middle')
+          .text(xLabel);
+        
+        // Y axis
+        svg.append('g')
+          .call(d3.axisLeft(yScale).ticks(5))
+          .append('text')
+          .attr('fill', '#666')
+          .attr('transform', 'rotate(-90)')
+          .attr('y', -40)
+          .attr('x', -chartHeight / 2)
+          .attr('text-anchor', 'middle')
+          .text(yLabel);
+        
+        // Draw bars
+        svg.selectAll('rect')
+          .data(chartData)
+          .enter()
+          .append('rect')
+          .attr('x', d => xScale(getLabel(d)))
+          .attr('y', d => yScale(getValue(d)))
+          .attr('width', xScale.bandwidth())
+          .attr('height', d => chartHeight - yScale(getValue(d)))
+          .attr('fill', (d, i) => d.color || colorArray[i % colorArray.length]);
+      } catch (error) {
+        console.error("Error rendering vertical bar chart:", error);
+      }
+    }
+    
+    // Add title if provided
+    if (title) {
+      svg.append('text')
+        .attr('x', chartWidth / 2)
+        .attr('y', -10)
+        .attr('text-anchor', 'middle')
+        .style('font-size', '16px')
+        .text(title);
+    }
+  }, [data, xLabel, yLabel, title, colorArray, horizontal, height, margin, derivative]);
+  
+  // Render a placeholder if data is invalid
+  if (!data || !Array.isArray(data) || data.length === 0) {
+    return (
+      <div className="bar-chart-container" style={{ height, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+        <div className="error-message">No data available to display</div>
+      </div>
+    );
+  }
+  
+  return (
+    <div className="bar-chart-container" style={{ height }}>
+      <div ref={chartRef} className="bar-chart" style={{ width: '100%', height: '100%' }}></div>
+    </div>
+  );
+};
+
+export default BarChart;
