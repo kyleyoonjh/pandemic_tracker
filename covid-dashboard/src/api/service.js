@@ -93,6 +93,16 @@ export const fetchHistoricalCountryData = async (country, days = 30) => {
   }
 };
 
+export const fetchHistoricalCountriesData = async (days = 2) => {
+  try {
+    const response = await apiClient.get(ENDPOINTS.HISTORICAL_COUNTRIES(days));
+    return response.data;
+  } catch (error) {
+    console.error(`Error fetching historical countries data: ${error.message}`);
+    throw error;
+  }
+};
+
 // Vaccination data services
 export const fetchVaccineData = async () => {
   try {

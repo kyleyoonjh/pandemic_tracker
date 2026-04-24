@@ -16,13 +16,15 @@ const Header = () => {
     <header className="header">
       <div className="header-container">
         <div className="logo">
-          <span className="logo-text">Covid-19 Pandemic Tracker</span>
+          <span className="logo-text">
+            Pandemic Tracker<span className="logo-accent"> Sea-Through</span>
+          </span>
         </div>
         
         <nav className="nav-links">
-          <a href="#dashboard" className="nav-link active">Dashboard</a>
-          <a href="#about" className="nav-link">About</a>
-          <a href="#resources" className="nav-link">Resources</a>
+          <a href="#dashboard" className="nav-link active">Covid-19</a>
+          <a href="#about" className="nav-link">Flu A,B</a>
+          <a href="#resources" className="nav-link">MFox</a>
         </nav>
         
         <div className="header-actions">

@@ -1,16 +1,28 @@
 // src/components/Dashboard.js
 import React, { useState, useEffect, useMemo } from 'react';
 //import { fetchGlobalData, fetchCountriesData, fetchHistoricalData } from '../api/service';
-import { fetchGlobalData, fetchAllCountries as fetchCountriesData, fetchHistoricalAllData as fetchHistoricalData } from '../api/service';
+import {
+  fetchGlobalData,
+  fetchAllCountries as fetchCountriesData,
+  fetchHistoricalAllData as fetchHistoricalData,
+  fetchHistoricalCountriesData
+} from '../api/service';
 import LineChart from './charts/LineChart';
 import BarChart from './charts/BarChart';
 import WorldMap from './charts/WorldMap';
 import '../styles/Dashboard.css';
 
 const Dashboard = () => {
+  const MENU_TITLE_MAP = {
+    '#dashboard': 'Covid-19',
+    '#about': 'Flu A,B',
+    '#resources': 'MFox'
+  };
+
   const [globalData, setGlobalData] = useState(null);
   const [countriesData, setCountriesData] = useState([]);
   const [historicalData, setHistoricalData] = useState(null);
+  const [historicalCountriesData, setHistoricalCountriesData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   
@@ -24,30 +36,26 @@ const Dashboard = () => {
     from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     to: new Date().toISOString().split('T')[0]
   });
+  const [menuPrefix, setMenuPrefix] = useState(MENU_TITLE_MAP['#dashboard']);
   
   // Current data based on selection
   const [currentData, setCurrentData] = useState(null);
 
-  const calculateRtValue = (entry) => {
-    const active = Number(entry?.active || 0);
-    const todayCases = Number(entry?.todayCases || 0);
-    if (active <= 0 || todayCases <= 0) return null;
-    return Math.max(0, Math.min(5, todayCases / (active / 14)));
-  };
-  
   useEffect(() => {
     const loadData = async () => {
       try {
         setLoading(true);
-        const [globalResult, countriesResult, historicalResult] = await Promise.all([
+        const [globalResult, countriesResult, historicalResult, historicalCountriesResult] = await Promise.all([
           fetchGlobalData(),
           fetchCountriesData(),
-          fetchHistoricalData()
+          fetchHistoricalData(),
+          fetchHistoricalCountriesData(2)
         ]);
         
         setGlobalData(globalResult);
         setCountriesData(countriesResult);
         setHistoricalData(historicalResult);
+        setHistoricalCountriesData(Array.isArray(historicalCountriesResult) ? historicalCountriesResult : []);
         setCurrentData(globalResult); // Default to global data
         setLoading(false);
       } catch (err) {
@@ -69,6 +77,17 @@ const Dashboard = () => {
       }
     }
   }, [selectedCountry, globalData, countriesData]);
+
+  useEffect(() => {
+    const applyMenuPrefixFromHash = () => {
+      const currentHash = window.location.hash || '#dashboard';
+      setMenuPrefix(MENU_TITLE_MAP[currentHash] || 'Covid-19');
+    };
+
+    applyMenuPrefixFromHash();
+    window.addEventListener('hashchange', applyMenuPrefixFromHash);
+    return () => window.removeEventListener('hashchange', applyMenuPrefixFromHash);
+  }, []);
   
   const handleCountryChange = (e) => {
     setSelectedCountry(e.target.value);
@@ -107,8 +126,12 @@ const Dashboard = () => {
   const handleSortByColumn = async (columnKey) => {
     setIsRefreshingTable(true);
     try {
-      const latestCountries = await fetchCountriesData();
+      const [latestCountries, latestHistoricalCountries] = await Promise.all([
+        fetchCountriesData(),
+        fetchHistoricalCountriesData(2)
+      ]);
       setCountriesData(latestCountries);
+      setHistoricalCountriesData(Array.isArray(latestHistoricalCountries) ? latestHistoricalCountries : []);
       setSortKey(columnKey);
     } catch (fetchError) {
       console.error('Failed to refresh countries data before sorting:', fetchError);
@@ -122,6 +145,22 @@ const Dashboard = () => {
     return num?.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",") || "N/A";
   };
 
+  const getLatestDailyIncrement = (timeline) => {
+    if (!timeline || typeof timeline !== 'object') return null;
+    const entries = Object.entries(timeline)
+      .map(([date, value]) => ({
+        date: new Date(date),
+        value: Number(value || 0)
+      }))
+      .filter((item) => !Number.isNaN(item.date.getTime()))
+      .sort((a, b) => a.date - b.date);
+
+    if (entries.length < 2) return null;
+    const latest = entries[entries.length - 1].value;
+    const previous = entries[entries.length - 2].value;
+    return Math.max(0, latest - previous);
+  };
+
   const formatCompactNumber = (value) => {
     const num = Number(value || 0);
     if (!Number.isFinite(num)) return '0';
@@ -130,10 +169,23 @@ const Dashboard = () => {
     if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
     return `${Math.round(num)}`;
   };
-  
-  // Calculate percentage change (mock for now)
-  const getPercentChange = () => {
-    return '0.0%';
+
+  const getLatestIncrementAndRate = (timeline) => {
+    if (!timeline || typeof timeline !== 'object') return { increment: null, rate: null };
+    const entries = Object.entries(timeline)
+      .map(([date, value]) => ({
+        date: new Date(date),
+        value: Number(value || 0)
+      }))
+      .filter((item) => !Number.isNaN(item.date.getTime()))
+      .sort((a, b) => a.date - b.date);
+
+    if (entries.length < 2) return { increment: null, rate: null };
+    const latest = entries[entries.length - 1].value;
+    const previous = entries[entries.length - 2].value;
+    const increment = Math.max(0, latest - previous);
+    const rate = previous > 0 ? (increment / previous) * 100 : null;
+    return { increment, rate };
   };
   
   const mapDataWithDerivedMetrics = useMemo(() => {
@@ -144,12 +196,67 @@ const Dashboard = () => {
         : 0,
       currentInfectionRate: country?.population > 0
         ? (Number(country.active || 0) / Number(country.population || 0)) * 100
-        : 0,
-      // Rt proxy from daily incidence vs current active pool.
-      // This is an approximation for visualization purposes.
-      rtValue: calculateRtValue(country)
+        : 0
     }));
   }, [countriesData]);
+
+  const countryYesterdayCasesMap = useMemo(() => {
+    const map = new Map();
+    historicalCountriesData.forEach((item) => {
+      if (!item?.country || !item?.timeline?.cases) return;
+      const increment = getLatestDailyIncrement(item.timeline.cases);
+      map.set(String(item.country).toLowerCase(), increment);
+    });
+    return map;
+  }, [historicalCountriesData]);
+
+  const mapDataWithYesterdayMetrics = useMemo(() => {
+    return mapDataWithDerivedMetrics.map((country) => ({
+      ...country,
+      yesterdayCases: countryYesterdayCasesMap.get(String(country.country || '').toLowerCase()) ?? 0
+    }));
+  }, [mapDataWithDerivedMetrics, countryYesterdayCasesMap]);
+
+  const yesterdayGlobalCasesStats = useMemo(() => {
+    return getLatestIncrementAndRate(historicalData?.cases);
+  }, [historicalData]);
+
+  const yesterdayGlobalDeathsStats = useMemo(() => {
+    return getLatestIncrementAndRate(historicalData?.deaths);
+  }, [historicalData]);
+
+  const displayedNewCases = useMemo(() => {
+    if (selectedCountry === 'Global' || selectedCountry === 'all') {
+      return yesterdayGlobalCasesStats.increment;
+    }
+
+    const selectedCountryName = String(selectedCountry || '').toLowerCase();
+    const countryYesterday = countryYesterdayCasesMap.get(selectedCountryName);
+    if (Number.isFinite(countryYesterday) && countryYesterday >= 0) return countryYesterday;
+    return null;
+  }, [selectedCountry, yesterdayGlobalCasesStats, countryYesterdayCasesMap]);
+
+  const displayedCasesPercent = useMemo(() => {
+    if (selectedCountry === 'Global' || selectedCountry === 'all') {
+      return yesterdayGlobalCasesStats.rate;
+    }
+    const todayCases = Number(currentData?.todayCases || 0);
+    const totalCases = Number(currentData?.cases || 0);
+    const previousCases = totalCases - todayCases;
+    if (todayCases <= 0 || previousCases <= 0) return null;
+    return (todayCases / previousCases) * 100;
+  }, [selectedCountry, currentData, yesterdayGlobalCasesStats]);
+
+  const displayedDeathsPercent = useMemo(() => {
+    if (selectedCountry === 'Global' || selectedCountry === 'all') {
+      return yesterdayGlobalDeathsStats.rate;
+    }
+    const todayDeaths = Number(currentData?.todayDeaths || 0);
+    const totalDeaths = Number(currentData?.deaths || 0);
+    const previousDeaths = totalDeaths - todayDeaths;
+    if (todayDeaths <= 0 || previousDeaths <= 0) return null;
+    return (todayDeaths / previousDeaths) * 100;
+  }, [selectedCountry, currentData, yesterdayGlobalDeathsStats]);
 
   const globalDistribution = useMemo(() => {
     const active = Number(globalData?.active || 0);
@@ -169,7 +276,7 @@ const Dashboard = () => {
   }, [globalData]);
 
   // Top 10 countries by active metric
-  const topCountries = [...mapDataWithDerivedMetrics]
+  const topCountries = [...mapDataWithYesterdayMetrics]
     .sort((a, b) => (Number(b[activeMetric] || 0) - Number(a[activeMetric] || 0)))
     .slice(0, 10);
 
@@ -199,6 +306,7 @@ const Dashboard = () => {
           rank: index + 1,
           country: country.country,
           cases,
+          newConfirmed: countryYesterdayCasesMap.get(String(country.country || '').toLowerCase()) ?? null,
           currentInfectionCases: active,
           deaths,
           infectionRateValue: population > 0 ? (cases / population) * 100 : 0,
@@ -239,7 +347,7 @@ const Dashboard = () => {
         currentInfectionRate: country.currentInfectionRateValue !== null ? country.currentInfectionRateValue.toFixed(2) : 'N/A',
         deathRate: country.deathRateValue.toFixed(2)
       }));
-  }, [countriesData, sortKey]);
+  }, [countriesData, sortKey, countryYesterdayCasesMap]);
 
   if (loading) return <div className="loading">Loading Pandemic data...</div>;
   if (error) return <div className="error">{error}</div>;
@@ -247,7 +355,7 @@ const Dashboard = () => {
   return (
     <div className="dashboard-container">
       <div className="dashboard-header">
-        <h1>Pandemic Dashboard</h1>
+        <h1>{menuPrefix} Pandemic Dashboard</h1>
         <div className="last-updated">Last updated: {new Date().toLocaleDateString()}</div>
       </div>
       
@@ -267,13 +375,13 @@ const Dashboard = () => {
       </div>
       
       <div className="stats-container">
-        <button type="button" className={`stat-card rt-metric metric-card-button ${activeMetric === 'rtValue' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('rtValue')}>
-          <h3>Rt (Spread Rate)</h3>
+        <button type="button" className={`stat-card rt-metric metric-card-button ${activeMetric === 'yesterdayCases' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('yesterdayCases')}>
+          <h3>New Cases</h3>
           <div className="stat-value">
-            {calculateRtValue(currentData) !== null ? calculateRtValue(currentData).toFixed(2) : 'N/A'}
+            {displayedNewCases !== null ? formatNumber(displayedNewCases) : 'N/A'}
           </div>
           <div className="stat-change neutral">
-            {calculateRtValue(currentData) === null ? 'Daily update unavailable' : 'Estimated from daily trend'}
+            New confirmed
           </div>
         </button>
 
@@ -281,7 +389,7 @@ const Dashboard = () => {
           <h3>Total Cases</h3>
           <div className="stat-value">{formatNumber(currentData?.cases)}</div>
           <div className="stat-change positive">
-            {getPercentChange()} ↑
+            {displayedCasesPercent !== null ? `${displayedCasesPercent.toFixed(2)}%` : 'N/A'} ↑
           </div>
         </button>
         
@@ -299,13 +407,8 @@ const Dashboard = () => {
           <h3>Deaths</h3>
           <div className="stat-value">{formatNumber(currentData?.deaths)}</div>
           <div className="stat-change positive">
-            {getPercentChange()} ↑
+            {displayedDeathsPercent !== null ? `${displayedDeathsPercent.toFixed(2)}%` : 'N/A'} ↑
           </div>
-        </button>
-        
-        <button type="button" className={`stat-card total-tests metric-card-button ${activeMetric === 'tests' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('tests')}>
-          <h3>Total Tests</h3>
-          <div className="stat-value">{formatNumber(currentData?.tests)}</div>
         </button>
         
         <button type="button" className={`stat-card case-fatality metric-card-button ${activeMetric === 'caseFatalityRate' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('caseFatalityRate')}>
@@ -337,7 +440,7 @@ const Dashboard = () => {
         <div className="chart-card map-chart-card">
           <h3>Pandemic Spread Map</h3>
           <WorldMap 
-            data={mapDataWithDerivedMetrics}
+            data={mapDataWithYesterdayMetrics}
             metric={activeMetric}
             height={560}
           />
@@ -352,6 +455,7 @@ const Dashboard = () => {
                   <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('currentInfectionRateValue')} disabled={isRefreshingTable}>Rank</button></th>
                   <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('country')} disabled={isRefreshingTable}>Country</button></th>
                   <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('cases')} disabled={isRefreshingTable}>Cases</button></th>
+                  <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('newConfirmed')} disabled={isRefreshingTable}>New Confirmed</button></th>
                   <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('infectionRateValue')} disabled={isRefreshingTable}>Infection Rate</button></th>
                   <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('recoveryRateValue')} disabled={isRefreshingTable}>Recovery Rate</button></th>
                   <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('currentInfectionCases')} disabled={isRefreshingTable}>Current Infection Cases</button></th>
@@ -366,6 +470,7 @@ const Dashboard = () => {
                     <td>{country.rank}</td>
                     <td>{country.country}</td>
                     <td>{formatNumber(country.cases)}</td>
+                    <td>{country.newConfirmed !== null ? formatNumber(country.newConfirmed) : 'N/A'}</td>
                     <td>{country.infectionRate}%</td>
                     <td>{country.recoveryRate === 'N/A' ? 'N/A' : `${country.recoveryRate}%`}</td>
                     <td>{formatNumber(country.currentInfectionCases)}</td>

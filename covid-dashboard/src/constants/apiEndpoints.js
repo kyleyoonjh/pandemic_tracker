@@ -17,6 +17,7 @@ export const ENDPOINTS = {
   // Historical data
   HISTORICAL_ALL: (lastDays = 'all') => `${BASE_URL}/historical/all?lastdays=${lastDays}`,
   HISTORICAL_COUNTRY: (country, lastDays = 'all') => `${BASE_URL}/historical/${country}?lastdays=${lastDays}`,
+  HISTORICAL_COUNTRIES: (lastDays = '2') => `${BASE_URL}/historical?lastdays=${lastDays}`,
   
   // Continent data
   CONTINENTS: `${BASE_URL}/continents`,
