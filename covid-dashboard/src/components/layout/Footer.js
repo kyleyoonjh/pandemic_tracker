@@ -9,8 +9,8 @@ const Footer = () => {
     <footer className="app-footer">
       <div className="footer-container">
         <div className="footer-section">
-          <h3>COVID-19 Dashboard</h3>
-          <p>An interactive visualization tool for tracking COVID-19 statistics worldwide.</p>
+          <h3>Pandemic Dashboard</h3>
+          <p>An interactive visualization tool for tracking Pandemic statistics worldwide.</p>
         </div>
         
         <div className="footer-section">
@@ -33,7 +33,7 @@ const Footer = () => {
       </div>
       
       <div className="footer-bottom">
-        <p>&copy; {currentYear} COVID-19 Interactive Dashboard. All data is provided for educational and informational purposes only.</p>
+        <p>&copy; {currentYear} Pandemic Interactive Dashboard. All data is provided for educational and informational purposes only.</p>
         <p>This dashboard is not affiliated with any health organization or government entity.</p>
       </div>
     </footer>

@@ -225,3 +225,15 @@
   background-color: var(--sidebar-border);
   border-radius: 4px;
 }
+
+/* Hide entire left sidebar panel and toggle button */
+.sidebar,
+.sidebar-toggle {
+  display: none !important;
+}
+
+@media (min-width: 992px) {
+  .main-content {
+    margin-left: 0 !important;
+  }
+}

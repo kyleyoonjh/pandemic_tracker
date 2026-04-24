@@ -182,6 +182,10 @@
 }
 
 /* World Map */
+.world-map-container {
+  position: relative;
+}
+
 .world-map {
   background-color: #f5f5f5;
 }
@@ -203,6 +207,37 @@
 
 .world-map .country.no-data {
   fill: var(--map-no-data);
+}
+
+.airport-marker-group {
+  cursor: pointer;
+}
+
+.airport-marker-halo {
+  pointer-events: none;
+}
+
+.airport-marker {
+  cursor: pointer;
+}
+
+.airport-marker:hover {
+  opacity: 0.9;
+  transform: scale(1.15);
+  transform-origin: center;
+}
+
+.country-value-label {
+  font-size: 10px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 2px;
+  pointer-events: none;
+}
+
+body.dark-mode .country-value-label {
+  stroke: rgba(0, 0, 0, 0.9);
 }
 
 .map-legend {

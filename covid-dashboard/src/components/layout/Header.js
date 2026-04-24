@@ -16,8 +16,7 @@ const Header = () => {
     <header className="header">
       <div className="header-container">
         <div className="logo">
-          <img src="/covid-icon.svg" alt="COVID-19" className="logo-icon" />
-          <span className="logo-text">COVID-19 Tracker</span>
+          <span className="logo-text">Covid-19 Pandemic Tracker</span>
         </div>
         
         <nav className="nav-links">

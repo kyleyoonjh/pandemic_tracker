@@ -16,7 +16,7 @@ const LineChart = ({
   seriesAccessor = d => d.series,
   xLabel = 'Date',
   yLabel = 'Value',
-  title = 'COVID-19 Timeline',
+  title = 'Pandemic Timeline',
   colors = colorScales.multi,
   animate = true,
   showLegend = true,

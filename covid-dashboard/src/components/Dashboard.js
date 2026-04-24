@@ -1,10 +1,9 @@
 // src/components/Dashboard.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 //import { fetchGlobalData, fetchCountriesData, fetchHistoricalData } from '../api/service';
 import { fetchGlobalData, fetchAllCountries as fetchCountriesData, fetchHistoricalAllData as fetchHistoricalData } from '../api/service';
 import LineChart from './charts/LineChart';
 import BarChart from './charts/BarChart';
-import PieChart from './charts/PieChart';
 import WorldMap from './charts/WorldMap';
 import '../styles/Dashboard.css';
 
@@ -19,6 +18,8 @@ const Dashboard = () => {
   const [selectedCountry, setSelectedCountry] = useState('Global');
   const [timeRange, setTimeRange] = useState('30');
   const [activeMetric, setActiveMetric] = useState('cases');
+  const [sortKey, setSortKey] = useState('currentInfectionRateValue');
+  const [isRefreshingTable, setIsRefreshingTable] = useState(false);
   const [dateRange, setDateRange] = useState({
     from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     to: new Date().toISOString().split('T')[0]
@@ -26,6 +27,13 @@ const Dashboard = () => {
   
   // Current data based on selection
   const [currentData, setCurrentData] = useState(null);
+
+  const calculateRtValue = (entry) => {
+    const active = Number(entry?.active || 0);
+    const todayCases = Number(entry?.todayCases || 0);
+    if (active <= 0 || todayCases <= 0) return null;
+    return Math.max(0, Math.min(5, todayCases / (active / 14)));
+  };
   
   useEffect(() => {
     const loadData = async () => {
@@ -43,7 +51,7 @@ const Dashboard = () => {
         setCurrentData(globalResult); // Default to global data
         setLoading(false);
       } catch (err) {
-        setError('Failed to load COVID-19 data. Please try again later.');
+        setError('Failed to load Pandemic data. Please try again later.');
         setLoading(false);
       }
     };
@@ -95,13 +103,32 @@ const Dashboard = () => {
       to: endDate.toISOString().split('T')[0]
     });
   };
-  
-  if (loading) return <div className="loading">Loading COVID-19 data...</div>;
-  if (error) return <div className="error">{error}</div>;
+
+  const handleSortByColumn = async (columnKey) => {
+    setIsRefreshingTable(true);
+    try {
+      const latestCountries = await fetchCountriesData();
+      setCountriesData(latestCountries);
+      setSortKey(columnKey);
+    } catch (fetchError) {
+      console.error('Failed to refresh countries data before sorting:', fetchError);
+    } finally {
+      setIsRefreshingTable(false);
+    }
+  };
   
   // Format number with commas
   const formatNumber = (num) => {
     return num?.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",") || "N/A";
+  };
+
+  const formatCompactNumber = (value) => {
+    const num = Number(value || 0);
+    if (!Number.isFinite(num)) return '0';
+    if (num >= 1000000000) return `${(num / 1000000000).toFixed(1)}B`;
+    if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
+    if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
+    return `${Math.round(num)}`;
   };
   
   // Calculate percentage change (mock for now)
@@ -109,15 +136,118 @@ const Dashboard = () => {
     return '0.0%';
   };
   
-  // Top 10 countries by cases
-  const topCountries = [...countriesData]
-    .sort((a, b) => b.cases - a.cases)
+  const mapDataWithDerivedMetrics = useMemo(() => {
+    return countriesData.map((country) => ({
+      ...country,
+      caseFatalityRate: country?.cases > 0
+        ? (Number(country.deaths || 0) / Number(country.cases || 0)) * 100
+        : 0,
+      currentInfectionRate: country?.population > 0
+        ? (Number(country.active || 0) / Number(country.population || 0)) * 100
+        : 0,
+      // Rt proxy from daily incidence vs current active pool.
+      // This is an approximation for visualization purposes.
+      rtValue: calculateRtValue(country)
+    }));
+  }, [countriesData]);
+
+  const globalDistribution = useMemo(() => {
+    const active = Number(globalData?.active || 0);
+    const recovered = Number(globalData?.recovered || 0);
+    const deaths = Number(globalData?.deaths || 0);
+    const total = active + recovered + deaths;
+    if (total <= 0) return [];
+
+    return [
+      { label: 'Active', value: active, color: '#4e79a7' },
+      { label: 'Recovered', value: recovered, color: '#f28e2b' },
+      { label: 'Deaths', value: deaths, color: '#e15759' }
+    ].map((item) => ({
+      ...item,
+      percent: (item.value / total) * 100
+    }));
+  }, [globalData]);
+
+  // Top 10 countries by active metric
+  const topCountries = [...mapDataWithDerivedMetrics]
+    .sort((a, b) => (Number(b[activeMetric] || 0) - Number(a[activeMetric] || 0)))
     .slice(0, 10);
+
+  const rankedCountries = useMemo(() => {
+    const computedRows = [...countriesData]
+      .filter((country) =>
+        country &&
+        Number.isFinite(country.cases) &&
+        country.cases > 0 &&
+        Number.isFinite(country.population) &&
+        country.population > 0
+      )
+      .sort((a, b) => b.cases - a.cases)
+      .slice(0, 25)
+      .map((country, index) => {
+        const cases = Number(country.cases || 0);
+        const population = Number(country.population || 0);
+        const active = Number(country.active || 0);
+        const recoveredFromApi = Number(country.recovered || 0);
+        const deaths = Number(country.deaths || 0);
+        const hasReliableRecoveryData = recoveredFromApi > 0;
+        const recovered = recoveredFromApi > 0
+          ? recoveredFromApi
+          : Math.max(0, cases - active - deaths);
+
+        return {
+          rank: index + 1,
+          country: country.country,
+          cases,
+          currentInfectionCases: active,
+          deaths,
+          infectionRateValue: population > 0 ? (cases / population) * 100 : 0,
+          recoveryRateValue: hasReliableRecoveryData && cases > 0
+            ? (recovered / cases) * 100
+            : null,
+          currentInfectionRateValue: hasReliableRecoveryData && population > 0
+            ? (active / population) * 100
+            : null,
+          deathRateValue: cases > 0 ? (deaths / cases) * 100 : 0
+        };
+      });
+
+    const sortableRows = [...computedRows];
+
+    sortableRows.sort((a, b) => {
+      if (sortKey === 'country') {
+        return String(a.country).localeCompare(String(b.country));
+      }
+      const aValue = a[sortKey];
+      const bValue = b[sortKey];
+      const aMissing = aValue === null || !Number.isFinite(Number(aValue));
+      const bMissing = bValue === null || !Number.isFinite(Number(bValue));
+
+      if (aMissing && bMissing) return 0;
+      if (aMissing) return 1;
+      if (bMissing) return -1;
+      return Number(bValue) - Number(aValue);
+    });
+
+    return sortableRows
+      .slice(0, 10)
+      .map((country, index) => ({
+        ...country,
+        rank: index + 1,
+        infectionRate: country.infectionRateValue.toFixed(2),
+        recoveryRate: country.recoveryRateValue !== null ? country.recoveryRateValue.toFixed(2) : 'N/A',
+        currentInfectionRate: country.currentInfectionRateValue !== null ? country.currentInfectionRateValue.toFixed(2) : 'N/A',
+        deathRate: country.deathRateValue.toFixed(2)
+      }));
+  }, [countriesData, sortKey]);
+
+  if (loading) return <div className="loading">Loading Pandemic data...</div>;
+  if (error) return <div className="error">{error}</div>;
   
   return (
     <div className="dashboard-container">
       <div className="dashboard-header">
-        <h1>COVID-19 Dashboard</h1>
+        <h1>Pandemic Dashboard</h1>
         <div className="last-updated">Last updated: {new Date().toLocaleDateString()}</div>
       </div>
       
@@ -134,115 +264,51 @@ const Dashboard = () => {
           </select>
         </div>
         
-        <div className="date-range-selector">
-          <div className="time-range-tabs">
-            <button 
-              className={`time-range-tab ${timeRange === '7' ? 'active' : ''}`}
-              onClick={() => handleTimeRangeChange('7')}
-            >
-              7 Days
-            </button>
-            <button 
-              className={`time-range-tab ${timeRange === '30' ? 'active' : ''}`}
-              onClick={() => handleTimeRangeChange('30')}
-            >
-              30 Days
-            </button>
-            <button 
-              className={`time-range-tab ${timeRange === '90' ? 'active' : ''}`}
-              onClick={() => handleTimeRangeChange('90')}
-            >
-              90 Days
-            </button>
-            <button 
-              className={`time-range-tab ${timeRange === '365' ? 'active' : ''}`}
-              onClick={() => handleTimeRangeChange('365')}
-            >
-              1 Year
-            </button>
-            <button 
-              className={`time-range-tab ${timeRange === 'all' ? 'active' : ''}`}
-              onClick={() => handleTimeRangeChange('all')}
-            >
-              All Time
-            </button>
-          </div>
-        </div>
-        
-        <div className="date-picker-container">
-          <div>
-            <label>From:</label>
-            <input 
-              type="date" 
-              value={dateRange.from} 
-              onChange={(e) => setDateRange({...dateRange, from: e.target.value})}
-            />
-          </div>
-          <div>
-            <label>To:</label>
-            <input 
-              type="date" 
-              value={dateRange.to} 
-              onChange={(e) => setDateRange({...dateRange, to: e.target.value})}
-            />
-          </div>
-        </div>
-        
-        <div className="metric-selector">
-          <button 
-            className={`metric-button ${activeMetric === 'cases' ? 'active' : ''}`}
-            onClick={() => setActiveMetric('cases')}
-          >
-            Cases
-          </button>
-          <button 
-            className={`metric-button ${activeMetric === 'deaths' ? 'active' : ''}`}
-            onClick={() => setActiveMetric('deaths')}
-          >
-            Deaths
-          </button>
-          <button 
-            className={`metric-button ${activeMetric === 'recovered' ? 'active' : ''}`}
-            onClick={() => setActiveMetric('recovered')}
-          >
-            Recovered
-          </button>
-        </div>
       </div>
       
       <div className="stats-container">
-        <div className="stat-card total-cases">
+        <button type="button" className={`stat-card rt-metric metric-card-button ${activeMetric === 'rtValue' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('rtValue')}>
+          <h3>Rt (Spread Rate)</h3>
+          <div className="stat-value">
+            {calculateRtValue(currentData) !== null ? calculateRtValue(currentData).toFixed(2) : 'N/A'}
+          </div>
+          <div className="stat-change neutral">
+            {calculateRtValue(currentData) === null ? 'Daily update unavailable' : 'Estimated from daily trend'}
+          </div>
+        </button>
+
+        <button type="button" className={`stat-card total-cases metric-card-button ${activeMetric === 'cases' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('cases')}>
           <h3>Total Cases</h3>
           <div className="stat-value">{formatNumber(currentData?.cases)}</div>
           <div className="stat-change positive">
             {getPercentChange()} ↑
           </div>
-        </div>
+        </button>
         
-        <div className="stat-card active-cases">
+        <button type="button" className={`stat-card active-cases metric-card-button ${activeMetric === 'active' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('active')}>
           <h3>Active Cases</h3>
           <div className="stat-value">{formatNumber(currentData?.active)}</div>
-        </div>
+        </button>
         
-        <div className="stat-card recovered">
+        <button type="button" className={`stat-card recovered metric-card-button ${activeMetric === 'recovered' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('recovered')}>
           <h3>Recovered</h3>
           <div className="stat-value">{formatNumber(currentData?.recovered)}</div>
-        </div>
+        </button>
         
-        <div className="stat-card deaths">
+        <button type="button" className={`stat-card deaths metric-card-button ${activeMetric === 'deaths' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('deaths')}>
           <h3>Deaths</h3>
           <div className="stat-value">{formatNumber(currentData?.deaths)}</div>
           <div className="stat-change positive">
             {getPercentChange()} ↑
           </div>
-        </div>
+        </button>
         
-        <div className="stat-card total-tests">
+        <button type="button" className={`stat-card total-tests metric-card-button ${activeMetric === 'tests' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('tests')}>
           <h3>Total Tests</h3>
           <div className="stat-value">{formatNumber(currentData?.tests)}</div>
-        </div>
+        </button>
         
-        <div className="stat-card case-fatality">
+        <button type="button" className={`stat-card case-fatality metric-card-button ${activeMetric === 'caseFatalityRate' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('caseFatalityRate')}>
           <h3>Case Fatality Rate</h3>
           <div className="stat-value">
             {currentData?.deaths && currentData?.cases 
@@ -250,78 +316,100 @@ const Dashboard = () => {
               : 'N/A'
             }
           </div>
-        </div>
+        </button>
+
+        <button type="button" className={`stat-card current-infection-cases metric-card-button ${activeMetric === 'active' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('active')}>
+          <h3>Current Infection Cases</h3>
+          <div className="stat-value">{formatNumber(currentData?.active)}</div>
+        </button>
+
+        <button type="button" className={`stat-card current-infection-rate metric-card-button ${activeMetric === 'currentInfectionRate' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('currentInfectionRate')}>
+          <h3>Current Infection Rate</h3>
+          <div className="stat-value">
+            {currentData?.active && currentData?.population
+              ? ((currentData.active / currentData.population) * 100).toFixed(2) + '%'
+              : 'N/A'}
+          </div>
+        </button>
       </div>
       
       <div className="charts-container">
-        <div className="chart-card">
-          <h3>COVID-19 Spread Map</h3>
+        <div className="chart-card map-chart-card">
+          <h3>Pandemic Spread Map</h3>
           <WorldMap 
-            data={countriesData}
+            data={mapDataWithDerivedMetrics}
             metric={activeMetric}
-            height={350}
+            height={560}
           />
         </div>
-        
-        <div className="chart-card">
-          <h3>Global - Cases Over Time</h3>
-          <LineChart 
-            data={historicalData?.[activeMetric]}
-            color="#5c6bc0"
-            height={350}
-          />
+
+        <div className="chart-card map-table-card">
+          <h3>Countries Ranked by Current Infection Rate {isRefreshingTable ? '(Refreshing...)' : ''}</h3>
+          <div className="countries-table-wrapper">
+            <table className="countries-table">
+              <thead>
+                <tr>
+                  <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('currentInfectionRateValue')} disabled={isRefreshingTable}>Rank</button></th>
+                  <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('country')} disabled={isRefreshingTable}>Country</button></th>
+                  <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('cases')} disabled={isRefreshingTable}>Cases</button></th>
+                  <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('infectionRateValue')} disabled={isRefreshingTable}>Infection Rate</button></th>
+                  <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('recoveryRateValue')} disabled={isRefreshingTable}>Recovery Rate</button></th>
+                  <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('currentInfectionCases')} disabled={isRefreshingTable}>Current Infection Cases</button></th>
+                  <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('currentInfectionRateValue')} disabled={isRefreshingTable}>Current Infection Rate</button></th>
+                  <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('deaths')} disabled={isRefreshingTable}>Deaths</button></th>
+                  <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('deathRateValue')} disabled={isRefreshingTable}>Death Rate</button></th>
+                </tr>
+              </thead>
+              <tbody>
+                {rankedCountries.map((country) => (
+                  <tr key={country.country}>
+                    <td>{country.rank}</td>
+                    <td>{country.country}</td>
+                    <td>{formatNumber(country.cases)}</td>
+                    <td>{country.infectionRate}%</td>
+                    <td>{country.recoveryRate === 'N/A' ? 'N/A' : `${country.recoveryRate}%`}</td>
+                    <td>{formatNumber(country.currentInfectionCases)}</td>
+                    <td>{country.currentInfectionRate === 'N/A' ? 'N/A' : `${country.currentInfectionRate}%`}</td>
+                    <td>{formatNumber(country.deaths)}</td>
+                    <td>{country.deathRate}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
         
-        <div className="chart-card">
-          <h3>Daily New Cases</h3>
-          <BarChart 
-            data={historicalData?.cases}
-            derivative={true} // Show daily changes
-            color="#ffa726"
-            height={350}
-          />
-        </div>
-        
-        <div className="chart-card">
-          <h3>Daily New Deaths</h3>
-          <BarChart 
-            data={historicalData?.deaths}
-            derivative={true}
-            color="#ef5350"
-            height={350}
-          />
-        </div>
-        
-        <div className="chart-card">
-          <h3>Top 10 Countries by Cases</h3>
-          <BarChart 
-            data={topCountries.map(country => ({
-              name: country.country,
-              value: country[activeMetric]
-            }))}
-            horizontal={true}
-            color="#5c6bc0"
-            height={350}
-          />
-        </div>
-        
-        <div className="chart-card">
+        <div className="chart-card global-distribution-card">
           <h3>Global Distribution</h3>
-          <PieChart 
-            data={[
-              { label: 'Active', value: globalData?.active || 0, color: '#ffa726' },
-              { label: 'Recovered', value: globalData?.recovered || 0, color: '#66bb6a' },
-              { label: 'Deaths', value: globalData?.deaths || 0, color: '#ef5350' }
-            ]}
-            height={350}
-          />
+          <div className="distribution-list">
+            {globalDistribution.map((item) => (
+              <div className="distribution-row" key={item.label}>
+                <div className="distribution-row-header">
+                  <div className="distribution-label-wrap">
+                    <span className="distribution-dot" style={{ backgroundColor: item.color }}></span>
+                    <span className="distribution-label">{item.label}</span>
+                  </div>
+                  <div className="distribution-values">
+                    <span className="distribution-percent">{item.percent.toFixed(2)}%</span>
+                    <span className="distribution-count">({formatCompactNumber(item.value)})</span>
+                  </div>
+                </div>
+                <div className="distribution-track">
+                  <div
+                    className="distribution-fill"
+                    style={{ width: `${item.percent}%`, backgroundColor: item.color }}
+                  ></div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
       
       <div className="dashboard-footer">
-        <p>Data source: Using reliable mock data for development and demonstration purposes.</p>
+        <p>Data source: Real-time data from disease.sh API.</p>
         <p className="disclaimer">
-          Note: This dashboard uses pre-populated sample data for visualization purposes since the disease.sh API is currently unavailable.
+          Note: Values refresh from live API responses and may change frequently.
         </p>
       </div>
     </div>

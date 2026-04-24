@@ -4,8 +4,7 @@
  * Using disease.sh API (https://disease.sh/)
  */
 
-//const BASE_URL = 'https://disease.sh/v3/covid-19';
-const BASE_URL = 'https://covid19.who.int/WHO-COVID-19-global-data.csv';
+const BASE_URL = 'https://disease.sh/v3/covid-19';
 
 export const ENDPOINTS = {
   // Global data

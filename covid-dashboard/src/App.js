@@ -7,7 +7,6 @@ import Header from './components/layout/Header';
 import Sidebar from './components/layout/Sidebar';
 //import Dashboard from './components/dashboard/Dashboard';
 import Dashboard from './components/Dashboard';
-import Footer from './components/layout/Footer';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import Loader from './components/common/Loader';
 import { fetchDashboardData } from './redux/actions/dataActions';
@@ -15,14 +14,14 @@ import { toggleSidebar, setTheme } from './redux/actions/uiActions';
 import './styles/global.css';
 
 // Placeholder components for other routes
-const About = () => <div className="dashboard-container"><h1>About</h1><p>Information about this COVID-19 dashboard.</p></div>;
-const Resources = () => <div className="dashboard-container"><h1>Resources</h1><p>COVID-19 resources and information.</p></div>;
-const Trends = () => <div className="dashboard-container"><h1>Trends & Forecasts</h1><p>COVID-19 trends analysis.</p></div>;
+const About = () => <div className="dashboard-container"><h1>About</h1><p>Information about this Pandemic dashboard.</p></div>;
+const Resources = () => <div className="dashboard-container"><h1>Resources</h1><p>Pandemic resources and information.</p></div>;
+const Trends = () => <div className="dashboard-container"><h1>Trends & Forecasts</h1><p>Pandemic trends analysis.</p></div>;
 const Vaccination = () => <div className="dashboard-container"><h1>Vaccination Progress</h1><p>Global vaccination data.</p></div>;
-const Testing = () => <div className="dashboard-container"><h1>Testing Data</h1><p>COVID-19 testing statistics.</p></div>;
-const Comparison = () => <div className="dashboard-container"><h1>Country Comparison</h1><p>Compare COVID-19 metrics between countries.</p></div>;
-const Hotspots = () => <div className="dashboard-container"><h1>Current Hotspots</h1><p>COVID-19 hotspot analysis.</p></div>;
-const Recovery = () => <div className="dashboard-container"><h1>Recovery Rates</h1><p>COVID-19 recovery statistics.</p></div>;
+const Testing = () => <div className="dashboard-container"><h1>Testing Data</h1><p>Pandemic testing statistics.</p></div>;
+const Comparison = () => <div className="dashboard-container"><h1>Country Comparison</h1><p>Compare Pandemic metrics between countries.</p></div>;
+const Hotspots = () => <div className="dashboard-container"><h1>Current Hotspots</h1><p>Pandemic hotspot analysis.</p></div>;
+const Recovery = () => <div className="dashboard-container"><h1>Recovery Rates</h1><p>Pandemic recovery statistics.</p></div>;
 const Preferences = () => <div className="dashboard-container"><h1>Display Preferences</h1><p>Customize your dashboard experience.</p></div>;
 const Sources = () => <div className="dashboard-container"><h1>Data Sources</h1><p>Information about data sources used in this dashboard.</p></div>;
 
@@ -73,7 +72,7 @@ const AppContent = () => {
       {(!initialLoadComplete || isLoading) ? (
         <div className="loading-container">
           <Loader size="large" />
-          <p>Loading COVID-19 dashboard data...</p>
+          <p>Loading Pandemic dashboard data...</p>
         </div>
       ) : (
         <Component />
@@ -102,7 +101,6 @@ const AppContent = () => {
           </Routes>
         </main>
       </div>
-      <Footer />
     </div>
   );
 };

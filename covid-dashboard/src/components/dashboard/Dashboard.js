@@ -177,7 +177,7 @@ const Dashboard = () => {
   return (
     <div className="dashboard">
       <div className="dashboard-header">
-        <h1>COVID-19 Dashboard</h1>
+        <h1>Pandemic Dashboard</h1>
         <p className="last-updated">
           Last updated: {global.data?.updated ? formatDate(new Date(global.data.updated)) : new Date().toLocaleDateString()}
         </p>
@@ -220,7 +220,7 @@ const Dashboard = () => {
       <StatisticsPanel data={currentData} />
       
       <div className="dashboard-grid">
-        <Card title="COVID-19 Spread Map" className="map-card grid-span-2">
+        <Card title="Pandemic Spread Map" className="map-card grid-span-2">
           {mapData ? (
             <WorldMap 
               data={mapData} 
@@ -315,9 +315,9 @@ const Dashboard = () => {
       
       {/* Additional stats or tables could be added here */}
       <div className="dashboard-footer">
-        <p>Data source: Using reliable mock data for development and demonstration purposes.</p>
+        <p>Data source: Real-time data from disease.sh API.</p>
         <p className="disclaimer">
-          Note: This dashboard uses pre-populated sample data for visualization purposes since the disease.sh API is currently unavailable.
+          Note: Values refresh from live API responses and may change frequently.
         </p>
       </div>
     </div>

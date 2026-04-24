@@ -5,6 +5,15 @@ import * as d3 from 'd3';
 import { formatNumber, formatPercentage } from '../../utils/formatters';
 import '../../styles/components/charts.css';
 
+const formatCompactNumber = (value) => {
+  const numericValue = Number(value || 0);
+  if (!Number.isFinite(numericValue)) return '0';
+  if (numericValue >= 1000000000) return `${(numericValue / 1000000000).toFixed(1)}B`;
+  if (numericValue >= 1000000) return `${(numericValue / 1000000).toFixed(1)}M`;
+  if (numericValue >= 1000) return `${(numericValue / 1000).toFixed(1)}K`;
+  return `${Math.round(numericValue)}`;
+};
+
 const PieChart = ({
   data,
   width = 400,
@@ -155,7 +164,7 @@ const PieChart = ({
     // Add legend
     const legendG = svg.append('g')
       .attr('class', 'legend-group')
-      .attr('transform', `translate(${width - 100}, 20)`);
+      .attr('transform', `translate(${Math.max(width - 210, 20)}, 24)`);
     
     // Only show legend if it fits
     if (pieData.length <= 10) {
@@ -175,7 +184,12 @@ const PieChart = ({
         .attr('x', 20)
         .attr('y', 10)
         .attr('class', 'legend-text')
-        .text(d => d.data.label.length > 12 ? d.data.label.slice(0, 12) + '...' : d.data.label);
+        .text((d) => {
+          const label = d.data.label.length > 14 ? `${d.data.label.slice(0, 14)}...` : d.data.label;
+          const percent = formatPercentage(d.data[metric] / total);
+          const compactValue = formatCompactNumber(d.data[metric]);
+          return `${label} ${percent} (${compactValue})`;
+        });
     }
     
   }, [data, width, height, margin, chartData, onSliceClick, radius, metric]);

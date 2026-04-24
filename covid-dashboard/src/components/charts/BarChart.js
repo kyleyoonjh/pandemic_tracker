@@ -16,7 +16,7 @@ const BarChart = ({
   seriesAccessor = d => d.series,
   xLabel = 'Category',
   yLabel = 'Value',
-  title = 'COVID-19 Statistics',
+  title = 'Pandemic Statistics',
   colors = colorScales.categories,
   sortBy = null, // 'asc', 'desc', or null
   maxBars = 20,
