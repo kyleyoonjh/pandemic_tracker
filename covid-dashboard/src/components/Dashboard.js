@@ -304,13 +304,18 @@ const Dashboard = () => {
   }, [selectedCountry, yesterdayGlobalDeathsStats, countryDailyStatsMap]);
 
   const displayedActiveCases = useMemo(() => {
+    const source = String(globalData?.source || '').toLowerCase();
+    const isGlobalSelection = selectedCountry === 'Global' || selectedCountry === 'all';
+    if (isGlobalSelection && source === 'who-csv') {
+      return null;
+    }
     const active = Number(currentData?.active || 0);
     const cases = Number(currentData?.cases || 0);
     if (selectedCountry !== 'Global' && selectedCountry !== 'all' && cases > 0 && active === 0) {
       return null;
     }
     return active;
-  }, [selectedCountry, currentData]);
+  }, [selectedCountry, currentData, globalData]);
 
   const globalDistribution = useMemo(() => {
     const active = Number(globalData?.active || 0);
@@ -444,12 +449,12 @@ const Dashboard = () => {
 
   const globalSourceLabel = useMemo(() => {
     const source = String(globalData?.source || 'disease.sh').toLowerCase();
-    if (source === 'who-csv') return 'who-csv';
+    if (source === 'who-csv') return 'WHO';
     return 'disease.sh';
   }, [globalData]);
 
   const globalSourceDateLabel = useMemo(() => {
-    if (globalSourceLabel !== 'who-csv') return '';
+    if (globalSourceLabel !== 'WHO') return '';
     const sourceDate = String(globalData?.sourceDate || '').trim();
     return sourceDate ? ` (${sourceDate})` : '';
   }, [globalData, globalSourceLabel]);
@@ -495,11 +500,6 @@ const Dashboard = () => {
           <span className={`global-source-badge source-${globalSourceLabel.replace('.', '-')}`}>
             Global source: {globalSourceLabel}{globalSourceDateLabel}
           </span>
-          {isSouthKoreaSelected && (
-            <span className="global-source-badge source-kr-api">
-              KR data date: {koreaSourceDateDisplay}
-            </span>
-          )}
         </div>
       </div>
       
@@ -582,8 +582,8 @@ const Dashboard = () => {
         <button type="button" className={`stat-card current-infection-rate metric-card-button ${activeMetric === 'currentInfectionRate' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('currentInfectionRate')}>
           <h3>Current Infection Rate</h3>
           <div className="stat-value">
-            {currentData?.active && currentData?.population
-              ? ((currentData.active / currentData.population) * 100).toFixed(2) + '%'
+            {displayedActiveCases !== null && currentData?.population
+              ? ((displayedActiveCases / currentData.population) * 100).toFixed(2) + '%'
               : 'N/A'}
           </div>
         </button>
@@ -642,7 +642,12 @@ const Dashboard = () => {
 
         {isSouthKoreaSelected && (
           <div className="chart-card korea-regional-table-card">
-            <h3>South Korea Regional Cases</h3>
+            <div className="section-title-row">
+              <h3>South Korea Regional Cases</h3>
+              <span className="global-source-badge source-kr-api">
+                대한민국 시, 도별 데이터: {koreaSourceDateDisplay}
+              </span>
+            </div>
             {koreaRegionalRows.length === 0 && (
               <p className="korea-regional-empty-note">
                 No regional rows returned from data.go.kr. Check REACT_APP_DATA_GO_KR_SERVICE_KEY and restart the dev server after updating .env.

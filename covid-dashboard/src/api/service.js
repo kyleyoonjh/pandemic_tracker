@@ -12,6 +12,7 @@ const apiClient = axios.create({
 
 const KR_POPULATION = 51329899;
 const DEFAULT_USE_WHO_GLOBAL = true;
+const DEFAULT_USE_DISEASE_FALLBACK = true;
 const WHO_GLOBAL_TIMEOUT_MS = 4000;
 const KR_API_TIMEOUT_MS = 4000;
 const DEFAULT_USE_KR_API = false;
@@ -468,15 +469,20 @@ apiClient.interceptors.response.use(
 export const fetchGlobalData = async () => {
   try {
     const useWhoGlobal = parseBooleanEnv(process.env.REACT_APP_USE_WHO_GLOBAL, DEFAULT_USE_WHO_GLOBAL);
+    const useDiseaseFallback = parseBooleanEnv(
+      process.env.REACT_APP_USE_DISEASE_FALLBACK,
+      DEFAULT_USE_DISEASE_FALLBACK
+    );
     if (useWhoGlobal) {
+      const publicBase = String(process.env.PUBLIC_URL || '').replace(/\/$/, '');
+      const publicCsvUrl = `${publicBase}/csv/WHO-COVID-19-global-data.csv`;
       const primaryWhoCsvUrl = process.env.REACT_APP_WHO_GLOBAL_CSV_URL
-        || '/api/who-global-data.csv';
+        || publicCsvUrl;
       const whoCsvCandidates = [
         primaryWhoCsvUrl,
-        '/api/who-global-data.csv',
-        'https://srhdpeuwpubsa.blob.core.windows.net/whdh/COVID/WHO-COVID-19-global-data.csv'
-      ];
-
+        publicCsvUrl,
+        '/csv/WHO-COVID-19-global-data.csv'
+      ].filter((value, index, self) => Boolean(value) && self.indexOf(value) === index);
       for (let i = 0; i < whoCsvCandidates.length; i += 1) {
         const whoCsvUrl = whoCsvCandidates[i];
         try {
@@ -500,7 +506,13 @@ export const fetchGlobalData = async () => {
           }
         }
       }
-      console.warn('WHO CSV unavailable across all candidates, falling back to disease.sh');
+
+      if (!useDiseaseFallback) {
+        // Keep dashboard resilient even when strict mode is requested.
+        console.warn('WHO CSV unavailable and strict mode enabled. Falling back to disease.sh to avoid blank dashboard.');
+      } else {
+        console.warn('WHO CSV unavailable, falling back to disease.sh');
+      }
     }
 
     const response = await apiClient.get(ENDPOINTS.GLOBAL);

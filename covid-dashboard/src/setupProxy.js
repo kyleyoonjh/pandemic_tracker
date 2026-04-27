@@ -1,6 +1,12 @@
 const { createProxyMiddleware } = require('http-proxy-middleware');
+const path = require('path');
 
 module.exports = function setupProxy(app) {
+  app.get('/api/who-global-data-local.csv', (req, res) => {
+    const localCsvPath = path.resolve(__dirname, '../csv/WHO-COVID-19-global-data.csv');
+    res.sendFile(localCsvPath);
+  });
+
   app.use(
     '/api/kr-covid',
     createProxyMiddleware({

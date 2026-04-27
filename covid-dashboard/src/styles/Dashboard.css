@@ -315,6 +315,18 @@
   grid-column: 1 / -1;
 }
 
+.section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.section-title-row h3 {
+  margin: 0;
+}
+
 .selected-country-table-card {
   grid-column: 1 / -1;
 }
@@ -775,6 +787,12 @@
   .chart-card h3 {
     font-size: 16px;
     margin-bottom: 10px;
+  }
+
+  .section-title-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
   }
 
   .countries-table {
