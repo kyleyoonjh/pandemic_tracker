@@ -23,7 +23,38 @@
     font-size: 14px;
     color: #666;
     margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
   }
+
+.global-source-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+
+.global-source-badge.source-who-csv {
+  background: rgba(0, 121, 191, 0.14);
+  color: #005a8d;
+  border-color: rgba(0, 121, 191, 0.38);
+}
+
+.global-source-badge.source-disease-sh {
+  background: rgba(67, 160, 71, 0.12);
+  color: #2e7d32;
+  border-color: rgba(67, 160, 71, 0.35);
+}
+
+.global-source-badge.source-kr-api {
+  background: rgba(255, 152, 0, 0.14);
+  color: #9c5d00;
+  border-color: rgba(255, 152, 0, 0.36);
+}
   
   /* Controls Section */
   .dashboard-controls {
@@ -53,6 +84,40 @@
     font-size: 14px;
     min-width: 200px;
   }
+
+.south-korea-quick-btn {
+  margin-left: 8px;
+  min-width: 108px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid #5c6bc0;
+  background: #5c6bc0;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.south-korea-quick-btn:hover {
+  background: #4e5ab0;
+}
+
+.global-quick-btn {
+  margin-left: 8px;
+  min-width: 108px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid #5c6bc0;
+  background: #5c6bc0;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.global-quick-btn:hover {
+  background: #4e5ab0;
+}
   
   .date-range-selector {
     display: flex;
@@ -244,6 +309,24 @@
 
 .map-table-card {
   grid-column: 1 / -1;
+}
+
+.korea-regional-table-card {
+  grid-column: 1 / -1;
+}
+
+.selected-country-table-card {
+  grid-column: 1 / -1;
+}
+
+.korea-regional-table td:first-child {
+  font-weight: 700;
+}
+
+.korea-regional-empty-note {
+  margin: 0 0 10px;
+  color: #8a3b3b;
+  font-size: 13px;
 }
 
 .global-distribution-card {
@@ -614,4 +697,124 @@
 .distribution-fill {
   height: 100%;
   border-radius: 999px;
+}
+
+/* Mobile-first overrides for full dashboard usability */
+@media (max-width: 768px) {
+  .dashboard-container {
+    padding: 12px;
+  }
+
+  .dashboard-header {
+    margin-bottom: 16px;
+  }
+
+  .dashboard-header h1 {
+    font-size: 22px;
+    margin-bottom: 8px;
+  }
+
+  .dashboard-header .last-updated {
+    font-size: 12px;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+
+  .dashboard-controls {
+    margin-bottom: 14px;
+  }
+
+  .country-selector {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .country-selector label {
+    width: 100%;
+    font-size: 13px;
+  }
+
+  .country-selector select {
+    width: 100%;
+    min-width: 0;
+    font-size: 13px;
+  }
+
+  .global-quick-btn,
+  .south-korea-quick-btn {
+    margin-left: 0;
+    width: calc(50% - 4px);
+    min-width: 0;
+  }
+
+  .stats-container {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .stat-card {
+    padding: 12px;
+  }
+
+  .stat-card h3 {
+    font-size: 13px;
+  }
+
+  .stat-card .stat-value {
+    font-size: 20px;
+  }
+
+  .chart-card {
+    padding: 12px;
+  }
+
+  .chart-card h3 {
+    font-size: 16px;
+    margin-bottom: 10px;
+  }
+
+  .countries-table {
+    min-width: 520px;
+  }
+
+  .countries-table thead th,
+  .countries-table tbody td {
+    padding: 9px 10px;
+    font-size: 12px;
+  }
+
+  .global-distribution-card {
+    min-height: auto;
+  }
+
+  .distribution-row {
+    padding: 10px;
+  }
+}
+
+@media (max-width: 480px) {
+  .dashboard-container {
+    padding: 10px;
+  }
+
+  .dashboard-header h1 {
+    font-size: 19px;
+  }
+
+  .global-quick-btn,
+  .south-korea-quick-btn {
+    width: 100%;
+  }
+
+  .stat-card .stat-value {
+    font-size: 18px;
+  }
+
+  .countries-table {
+    min-width: 480px;
+  }
 }

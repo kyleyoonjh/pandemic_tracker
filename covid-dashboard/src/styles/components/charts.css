@@ -188,6 +188,9 @@
 
 .world-map {
   background-color: #f5f5f5;
+  width: 100%;
+  height: auto;
+  display: block;
 }
 
 .world-map path {
@@ -293,5 +296,15 @@ body.dark-mode .country-value-label {
   
   .chart-controls {
     flex-direction: column;
+  }
+
+  .chart-tooltip {
+    font-size: 12px;
+    max-width: 220px;
+  }
+
+  .country-value-label {
+    font-size: 8px;
+    stroke-width: 2.2px;
   }
 }

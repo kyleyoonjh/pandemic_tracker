@@ -794,7 +794,8 @@ const WorldMap = ({
   margin = { top: 10, right: 10, bottom: 10, left: 10 },
   metric = 'cases',
   colorRange = colorScales?.cases || ['#f7fbff', '#08519c'], // Add fallback colors
-  onCountryClick = () => { }
+  onCountryClick = () => { },
+  focusCountry = null
 }) => {
   const mapRef = useRef();
   const tooltipRef = useRef();
@@ -806,16 +807,44 @@ const WorldMap = ({
 
   const filteredWorldData = useMemo(() => {
     if (!worldData?.features) return null;
+
+    const focusName = String(focusCountry || '').toLowerCase();
+    const isGlobalFocus = !focusName || focusName === 'global' || focusName === 'all';
+
+    let focusIso3 = '';
+    if (Array.isArray(data) && !isGlobalFocus) {
+      const focusedCountryData = data.find((country) => {
+        const countryName = String(country?.country || '').toLowerCase();
+        const iso2 = String(country?.countryInfo?.iso2 || '').toLowerCase();
+        const iso3 = String(country?.countryInfo?.iso3 || '').toLowerCase();
+        return countryName === focusName || iso2 === focusName || iso3 === focusName;
+      });
+      focusIso3 = String(focusedCountryData?.countryInfo?.iso3 || '').toUpperCase();
+    }
+
+    const countryFiltered = worldData.features.filter((feature) => {
+      const properties = feature?.properties || {};
+      const countryName = String(properties.ADMIN || properties.name || properties.NAME || '').toLowerCase();
+      const iso3 = String(properties.ISO_A3 || properties.iso_a3 || '').toUpperCase();
+      const isAntarctica = countryName === 'antarctica' || iso3 === 'ATA';
+      if (isAntarctica) return false;
+
+      if (isGlobalFocus) return true;
+      if (focusIso3) return iso3 === focusIso3;
+
+      // Fallback matching for name-based selections when ISO code is unavailable
+      if (countryName === focusName) return true;
+      if (focusName === 'south korea' || focusName === 's. korea' || focusName === 'korea' || focusName === 'kr') {
+        return iso3 === 'KOR' || countryName.includes('korea');
+      }
+      return countryName.includes(focusName);
+    });
+
     return {
       ...worldData,
-      features: worldData.features.filter((feature) => {
-        const properties = feature?.properties || {};
-        const countryName = properties.ADMIN || properties.name || properties.NAME || '';
-        const iso3 = properties.ISO_A3 || properties.iso_a3;
-        return countryName !== 'Antarctica' && iso3 !== 'ATA';
-      })
+      features: countryFiltered
     };
-  }, [worldData]);
+  }, [worldData, focusCountry, data]);
 
   // Fetch world geometry data
   useEffect(() => {
@@ -890,6 +919,8 @@ const WorldMap = ({
     const svg = d3.select(mapRef.current);
     const tooltip = d3.select(tooltipRef.current);
     const { colorScale, pathGenerator, projection } = mapConfig;
+    const focusName = String(focusCountry || '').toLowerCase();
+    const isGlobalFocus = !focusName || focusName === 'global' || focusName === 'all';
 
     // Clear previous contents
     svg.selectAll('*').remove();
@@ -1048,49 +1079,51 @@ const WorldMap = ({
       .attr('fill', d => labelColorScale(d.per100kValue))
       .text(d => d.label);
 
-    const airportGroup = g.append('g').attr('class', 'airports-layer');
-    const airportsWithPositions = AIRPORT_MARKERS.map((airport) => {
-      const point = projection([airport.lng, airport.lat]);
-      return {
-        ...airport,
-        x: point?.[0],
-        y: point?.[1]
-      };
-    }).filter((airport) => Number.isFinite(airport.x) && Number.isFinite(airport.y));
+    if (isGlobalFocus) {
+      const airportGroup = g.append('g').attr('class', 'airports-layer');
+      const airportsWithPositions = AIRPORT_MARKERS.map((airport) => {
+        const point = projection([airport.lng, airport.lat]);
+        return {
+          ...airport,
+          x: point?.[0],
+          y: point?.[1]
+        };
+      }).filter((airport) => Number.isFinite(airport.x) && Number.isFinite(airport.y));
 
-    const airportMarkers = airportGroup
-      .selectAll('g.airport-marker-group')
-      .data(airportsWithPositions)
-      .join('g')
-      .attr('class', 'airport-marker-group')
-      .attr('transform', d => `translate(${d.x},${d.y})`);
+      const airportMarkers = airportGroup
+        .selectAll('g.airport-marker-group')
+        .data(airportsWithPositions)
+        .join('g')
+        .attr('class', 'airport-marker-group')
+        .attr('transform', d => `translate(${d.x},${d.y})`);
 
-    airportMarkers.append('circle')
-      .attr('class', 'airport-marker-halo')
-      .attr('r', 5.5)
-      .attr('fill', theme === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.15)');
+      airportMarkers.append('circle')
+        .attr('class', 'airport-marker-halo')
+        .attr('r', 5.5)
+        .attr('fill', theme === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.15)');
 
-    airportMarkers.append('circle')
-      .attr('class', 'airport-marker')
-      .attr('r', 3.5)
-      .attr('fill', '#ff7f50')
-      .attr('stroke', theme === 'dark' ? '#fff' : '#111')
-      .attr('stroke-width', 1.5)
-      .on('mouseover', (event, d) => {
-        tooltip
-          .style('opacity', 1)
-          .style('left', `${event.pageX + 10}px`)
-          .style('top', `${event.pageY - 28}px`)
-          .html(`<strong>${d.iata}</strong><br/>${d.name}`);
-      })
-      .on('mousemove', (event) => {
-        tooltip
-          .style('left', `${event.pageX + 10}px`)
-          .style('top', `${event.pageY - 28}px`);
-      })
-      .on('mouseout', () => {
-        tooltip.style('opacity', 0);
-      });
+      airportMarkers.append('circle')
+        .attr('class', 'airport-marker')
+        .attr('r', 3.5)
+        .attr('fill', '#ff7f50')
+        .attr('stroke', theme === 'dark' ? '#fff' : '#111')
+        .attr('stroke-width', 1.5)
+        .on('mouseover', (event, d) => {
+          tooltip
+            .style('opacity', 1)
+            .style('left', `${event.pageX + 10}px`)
+            .style('top', `${event.pageY - 28}px`)
+            .html(`<strong>${d.iata}</strong><br/>${d.name}`);
+        })
+        .on('mousemove', (event) => {
+          tooltip
+            .style('left', `${event.pageX + 10}px`)
+            .style('top', `${event.pageY - 28}px`);
+        })
+        .on('mouseout', () => {
+          tooltip.style('opacity', 0);
+        });
+    }
 
     // Add a legend to display the color scale
     const legendWidth = 200;
@@ -1138,6 +1171,11 @@ const WorldMap = ({
       .attr('fill', theme === 'dark' ? '#ddd' : '#333');
 
     // Add a map title
+    const metricTitleMap = {
+      yesterdayCases: 'New Cases'
+    };
+    const metricTitle = metricTitleMap[metric] || `${metric.charAt(0).toUpperCase() + metric.slice(1)}`;
+
     svg.append('text')
       .attr('class', 'map-title')
       .attr('x', width / 2)
@@ -1146,8 +1184,8 @@ const WorldMap = ({
       .style('font-size', '16px')
       .style('font-weight', 'bold')
       .attr('fill', theme === 'dark' ? '#fff' : '#333')
-      .text(`Pandemic ${metric.charAt(0).toUpperCase() + metric.slice(1)} by Country`);
-  }, [data, width, height, margin, mapConfig, onCountryClick, theme, metric, colorRange, filteredWorldData]);
+      .text(`Pandemic ${metricTitle} by Country`);
+  }, [data, width, height, margin, mapConfig, onCountryClick, theme, metric, colorRange, filteredWorldData, focusCountry]);
 
   if (isLoading) {
     return <div className="chart-loading">Loading map data...</div>;

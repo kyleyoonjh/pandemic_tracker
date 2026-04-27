@@ -5,11 +5,13 @@ import {
   fetchGlobalData,
   fetchAllCountries as fetchCountriesData,
   fetchHistoricalAllData as fetchHistoricalData,
-  fetchHistoricalCountriesData
+  fetchHistoricalCountriesData,
+  fetchKoreaRegionalData
 } from '../api/service';
 import LineChart from './charts/LineChart';
 import BarChart from './charts/BarChart';
 import WorldMap from './charts/WorldMap';
+import KoreaRegionalMap from './charts/KoreaRegionalMap';
 import '../styles/Dashboard.css';
 
 const Dashboard = () => {
@@ -23,6 +25,7 @@ const Dashboard = () => {
   const [countriesData, setCountriesData] = useState([]);
   const [historicalData, setHistoricalData] = useState(null);
   const [historicalCountriesData, setHistoricalCountriesData] = useState([]);
+  const [koreaRegionalData, setKoreaRegionalData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   
@@ -40,24 +43,41 @@ const Dashboard = () => {
   
   // Current data based on selection
   const [currentData, setCurrentData] = useState(null);
+  const isSouthKoreaSelected = useMemo(() => {
+    const name = String(selectedCountry || '').toLowerCase();
+    return ['s. korea', 'south korea', 'korea', 'kr'].includes(name);
+  }, [selectedCountry]);
 
   useEffect(() => {
     const loadData = async () => {
       try {
         setLoading(true);
-        const [globalResult, countriesResult, historicalResult, historicalCountriesResult] = await Promise.all([
+        const [globalResult, countriesResult] = await Promise.all([
           fetchGlobalData(),
-          fetchCountriesData(),
-          fetchHistoricalData(),
-          fetchHistoricalCountriesData(2)
+          fetchCountriesData()
         ]);
         
         setGlobalData(globalResult);
         setCountriesData(countriesResult);
-        setHistoricalData(historicalResult);
-        setHistoricalCountriesData(Array.isArray(historicalCountriesResult) ? historicalCountriesResult : []);
         setCurrentData(globalResult); // Default to global data
         setLoading(false);
+
+        // Load non-critical datasets in background so main dashboard is not blocked.
+        fetchHistoricalData()
+          .then((historicalResult) => setHistoricalData(historicalResult))
+          .catch(() => setHistoricalData(null));
+
+        fetchHistoricalCountriesData(2)
+          .then((historicalCountriesResult) => {
+            setHistoricalCountriesData(Array.isArray(historicalCountriesResult) ? historicalCountriesResult : []);
+          })
+          .catch(() => setHistoricalCountriesData([]));
+
+        fetchKoreaRegionalData()
+          .then((koreaRegionalResult) => {
+            setKoreaRegionalData(Array.isArray(koreaRegionalResult) ? koreaRegionalResult : []);
+          })
+          .catch(() => setKoreaRegionalData([]));
       } catch (err) {
         setError('Failed to load Pandemic data. Please try again later.');
         setLoading(false);
@@ -91,6 +111,20 @@ const Dashboard = () => {
   
   const handleCountryChange = (e) => {
     setSelectedCountry(e.target.value);
+  };
+
+  const handleSelectSouthKorea = () => {
+    const southKoreaEntry = countriesData.find((country) => {
+      const name = String(country?.country || '').toLowerCase();
+      const iso2 = String(country?.countryInfo?.iso2 || '').toLowerCase();
+      return iso2 === 'kr' || name === 's. korea' || name === 'south korea';
+    });
+
+    setSelectedCountry(southKoreaEntry?.country || 'S. Korea');
+  };
+
+  const handleSelectGlobal = () => {
+    setSelectedCountry('Global');
   };
   
   const handleTimeRangeChange = (range) => {
@@ -210,6 +244,23 @@ const Dashboard = () => {
     return map;
   }, [historicalCountriesData]);
 
+  const countryDailyStatsMap = useMemo(() => {
+    const map = new Map();
+    historicalCountriesData.forEach((item) => {
+      if (!item?.country) return;
+      const key = String(item.country).toLowerCase();
+      const caseStats = getLatestIncrementAndRate(item?.timeline?.cases);
+      const deathStats = getLatestIncrementAndRate(item?.timeline?.deaths);
+      map.set(key, {
+        caseIncrement: caseStats.increment,
+        caseRate: caseStats.rate,
+        deathIncrement: deathStats.increment,
+        deathRate: deathStats.rate
+      });
+    });
+    return map;
+  }, [historicalCountriesData]);
+
   const mapDataWithYesterdayMetrics = useMemo(() => {
     return mapDataWithDerivedMetrics.map((country) => ({
       ...country,
@@ -240,23 +291,26 @@ const Dashboard = () => {
     if (selectedCountry === 'Global' || selectedCountry === 'all') {
       return yesterdayGlobalCasesStats.rate;
     }
-    const todayCases = Number(currentData?.todayCases || 0);
-    const totalCases = Number(currentData?.cases || 0);
-    const previousCases = totalCases - todayCases;
-    if (todayCases <= 0 || previousCases <= 0) return null;
-    return (todayCases / previousCases) * 100;
-  }, [selectedCountry, currentData, yesterdayGlobalCasesStats]);
+    const selectedCountryName = String(selectedCountry || '').toLowerCase();
+    return countryDailyStatsMap.get(selectedCountryName)?.caseRate ?? null;
+  }, [selectedCountry, yesterdayGlobalCasesStats, countryDailyStatsMap]);
 
   const displayedDeathsPercent = useMemo(() => {
     if (selectedCountry === 'Global' || selectedCountry === 'all') {
       return yesterdayGlobalDeathsStats.rate;
     }
-    const todayDeaths = Number(currentData?.todayDeaths || 0);
-    const totalDeaths = Number(currentData?.deaths || 0);
-    const previousDeaths = totalDeaths - todayDeaths;
-    if (todayDeaths <= 0 || previousDeaths <= 0) return null;
-    return (todayDeaths / previousDeaths) * 100;
-  }, [selectedCountry, currentData, yesterdayGlobalDeathsStats]);
+    const selectedCountryName = String(selectedCountry || '').toLowerCase();
+    return countryDailyStatsMap.get(selectedCountryName)?.deathRate ?? null;
+  }, [selectedCountry, yesterdayGlobalDeathsStats, countryDailyStatsMap]);
+
+  const displayedActiveCases = useMemo(() => {
+    const active = Number(currentData?.active || 0);
+    const cases = Number(currentData?.cases || 0);
+    if (selectedCountry !== 'Global' && selectedCountry !== 'all' && cases > 0 && active === 0) {
+      return null;
+    }
+    return active;
+  }, [selectedCountry, currentData]);
 
   const globalDistribution = useMemo(() => {
     const active = Number(globalData?.active || 0);
@@ -349,6 +403,86 @@ const Dashboard = () => {
       }));
   }, [countriesData, sortKey, countryYesterdayCasesMap]);
 
+  const koreaRegionalRows = useMemo(() => {
+    return [...koreaRegionalData]
+      .filter((row) => row?.region && row.region !== '검역')
+      .sort((a, b) => Number(b.confirmed || 0) - Number(a.confirmed || 0));
+  }, [koreaRegionalData]);
+
+  const selectedCountryRow = useMemo(() => {
+    if (!currentData || selectedCountry === 'Global' || selectedCountry === 'all') return null;
+
+    const cases = Number(currentData?.cases || 0);
+    const population = Number(currentData?.population || 0);
+    const active = Number(currentData?.active || 0);
+    const recoveredFromApi = Number(currentData?.recovered || 0);
+    const deaths = Number(currentData?.deaths || 0);
+    const hasReliableRecoveryData = recoveredFromApi > 0;
+    const recovered = recoveredFromApi > 0
+      ? recoveredFromApi
+      : Math.max(0, cases - active - deaths);
+    const selectedCountryName = String(selectedCountry || '').toLowerCase();
+    const yesterdayCases = countryYesterdayCasesMap.get(selectedCountryName) ?? null;
+
+    const infectionRateValue = population > 0 ? (cases / population) * 100 : null;
+    const recoveryRateValue = hasReliableRecoveryData && cases > 0 ? (recovered / cases) * 100 : null;
+    const currentInfectionRateValue = hasReliableRecoveryData && population > 0 ? (active / population) * 100 : null;
+    const deathRateValue = cases > 0 ? (deaths / cases) * 100 : null;
+
+    return {
+      country: currentData?.country || selectedCountry,
+      cases,
+      newConfirmed: yesterdayCases,
+      infectionRateValue,
+      recoveryRateValue,
+      currentInfectionCases: active,
+      currentInfectionRateValue,
+      deaths,
+      deathRateValue
+    };
+  }, [currentData, selectedCountry, countryYesterdayCasesMap]);
+
+  const globalSourceLabel = useMemo(() => {
+    const source = String(globalData?.source || 'disease.sh').toLowerCase();
+    if (source === 'who-csv') return 'who-csv';
+    return 'disease.sh';
+  }, [globalData]);
+
+  const globalSourceDateLabel = useMemo(() => {
+    if (globalSourceLabel !== 'who-csv') return '';
+    const sourceDate = String(globalData?.sourceDate || '').trim();
+    return sourceDate ? ` (${sourceDate})` : '';
+  }, [globalData, globalSourceLabel]);
+
+  const koreaSourceDateLabel = useMemo(() => {
+    if (!isSouthKoreaSelected) return '';
+    const regionalDate = koreaRegionalRows.reduce((latest, row) => {
+      const date = String(row?.sourceDate || '').trim();
+      if (!date) return latest;
+      return date > latest ? date : latest;
+    }, '');
+    const countryDate = String(currentData?.sourceDate || '').trim();
+    const raw = regionalDate || countryDate;
+    if (!raw) return '';
+
+    const normalized = /^\d{8}$/.test(raw)
+      ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
+      : raw;
+    return normalized;
+  }, [isSouthKoreaSelected, koreaRegionalRows, currentData]);
+
+  const isKrApiEnabled = useMemo(() => {
+    const raw = String(process.env.REACT_APP_USE_KR_API || '').toLowerCase();
+    return raw === 'true' || raw === '1' || raw === 'yes' || raw === 'on';
+  }, []);
+
+  const koreaSourceDateDisplay = useMemo(() => {
+    if (koreaSourceDateLabel) return koreaSourceDateLabel;
+    if (!isKrApiEnabled || !isSouthKoreaSelected) return 'N/A';
+    // data.go.kr ODMS_COVID_04 latest available date in this integration window
+    return '2023-08-31';
+  }, [koreaSourceDateLabel, isKrApiEnabled, isSouthKoreaSelected]);
+
   if (loading) return <div className="loading">Loading Pandemic data...</div>;
   if (error) return <div className="error">{error}</div>;
   
@@ -356,7 +490,17 @@ const Dashboard = () => {
     <div className="dashboard-container">
       <div className="dashboard-header">
         <h1>{menuPrefix} Pandemic Dashboard</h1>
-        <div className="last-updated">Last updated: {new Date().toLocaleDateString()}</div>
+        <div className="last-updated">
+          Last updated: {new Date().toLocaleDateString()}
+          <span className={`global-source-badge source-${globalSourceLabel.replace('.', '-')}`}>
+            Global source: {globalSourceLabel}{globalSourceDateLabel}
+          </span>
+          {isSouthKoreaSelected && (
+            <span className="global-source-badge source-kr-api">
+              KR data date: {koreaSourceDateDisplay}
+            </span>
+          )}
+        </div>
       </div>
       
       <div className="dashboard-controls">
@@ -370,6 +514,20 @@ const Dashboard = () => {
               </option>
             ))}
           </select>
+          <button
+            type="button"
+            className="global-quick-btn"
+            onClick={handleSelectGlobal}
+          >
+            Global
+          </button>
+          <button
+            type="button"
+            className="south-korea-quick-btn"
+            onClick={handleSelectSouthKorea}
+          >
+            South Korea
+          </button>
         </div>
         
       </div>
@@ -395,7 +553,7 @@ const Dashboard = () => {
         
         <button type="button" className={`stat-card active-cases metric-card-button ${activeMetric === 'active' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('active')}>
           <h3>Active Cases</h3>
-          <div className="stat-value">{formatNumber(currentData?.active)}</div>
+          <div className="stat-value">{displayedActiveCases !== null ? formatNumber(displayedActiveCases) : 'N/A'}</div>
         </button>
         
         <button type="button" className={`stat-card recovered metric-card-button ${activeMetric === 'recovered' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('recovered')}>
@@ -421,11 +579,6 @@ const Dashboard = () => {
           </div>
         </button>
 
-        <button type="button" className={`stat-card current-infection-cases metric-card-button ${activeMetric === 'active' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('active')}>
-          <h3>Current Infection Cases</h3>
-          <div className="stat-value">{formatNumber(currentData?.active)}</div>
-        </button>
-
         <button type="button" className={`stat-card current-infection-rate metric-card-button ${activeMetric === 'currentInfectionRate' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('currentInfectionRate')}>
           <h3>Current Infection Rate</h3>
           <div className="stat-value">
@@ -439,12 +592,86 @@ const Dashboard = () => {
       <div className="charts-container">
         <div className="chart-card map-chart-card">
           <h3>Pandemic Spread Map</h3>
-          <WorldMap 
-            data={mapDataWithYesterdayMetrics}
-            metric={activeMetric}
-            height={560}
-          />
+          {isSouthKoreaSelected ? (
+            <KoreaRegionalMap regionalData={koreaRegionalData} metric={activeMetric} height={560} />
+          ) : (
+            <WorldMap
+              data={mapDataWithYesterdayMetrics}
+              metric={activeMetric}
+              height={560}
+              focusCountry={selectedCountry}
+            />
+          )}
         </div>
+
+        {selectedCountryRow && (
+          <div className="chart-card selected-country-table-card">
+            <h3>Selected Country Details</h3>
+            <div className="countries-table-wrapper">
+              <table className="countries-table selected-country-table">
+                <thead>
+                  <tr>
+                    <th>Country</th>
+                    <th>Cases</th>
+                    <th>New Confirmed</th>
+                    <th>Infection Rate</th>
+                    <th>Recovery Rate</th>
+                    <th>Current Infection Cases</th>
+                    <th>Current Infection Rate</th>
+                    <th>Deaths</th>
+                    <th>Death Rate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>{selectedCountryRow.country}</td>
+                    <td>{formatNumber(selectedCountryRow.cases)}</td>
+                    <td>{selectedCountryRow.newConfirmed !== null ? formatNumber(selectedCountryRow.newConfirmed) : 'N/A'}</td>
+                    <td>{selectedCountryRow.infectionRateValue !== null ? `${selectedCountryRow.infectionRateValue.toFixed(2)}%` : 'N/A'}</td>
+                    <td>{selectedCountryRow.recoveryRateValue !== null ? `${selectedCountryRow.recoveryRateValue.toFixed(2)}%` : 'N/A'}</td>
+                    <td>{formatNumber(selectedCountryRow.currentInfectionCases)}</td>
+                    <td>{selectedCountryRow.currentInfectionRateValue !== null ? `${selectedCountryRow.currentInfectionRateValue.toFixed(2)}%` : 'N/A'}</td>
+                    <td>{formatNumber(selectedCountryRow.deaths)}</td>
+                    <td>{selectedCountryRow.deathRateValue !== null ? `${selectedCountryRow.deathRateValue.toFixed(2)}%` : 'N/A'}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {isSouthKoreaSelected && (
+          <div className="chart-card korea-regional-table-card">
+            <h3>South Korea Regional Cases</h3>
+            {koreaRegionalRows.length === 0 && (
+              <p className="korea-regional-empty-note">
+                No regional rows returned from data.go.kr. Check REACT_APP_DATA_GO_KR_SERVICE_KEY and restart the dev server after updating .env.
+              </p>
+            )}
+            <div className="countries-table-wrapper">
+              <table className="countries-table korea-regional-table">
+                <thead>
+                  <tr>
+                    <th>Region</th>
+                    <th>Confirmed</th>
+                    <th>New Confirmed</th>
+                    <th>Deaths</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {koreaRegionalRows.map((row) => (
+                    <tr key={row.region}>
+                      <td>{row.region}</td>
+                      <td>{formatNumber(row.confirmed)}</td>
+                      <td>{formatNumber(row.newConfirmed)}</td>
+                      <td>{formatNumber(row.deaths)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         <div className="chart-card map-table-card">
           <h3>Countries Ranked by Current Infection Rate {isRefreshingTable ? '(Refreshing...)' : ''}</h3>
@@ -512,7 +739,7 @@ const Dashboard = () => {
       </div>
       
       <div className="dashboard-footer">
-        <p>Data source: Real-time data from disease.sh API.</p>
+        <p>Data source: Global {globalSourceLabel}, country-level disease.sh API.</p>
         <p className="disclaimer">
           Note: Values refresh from live API responses and may change frequently.
         </p>

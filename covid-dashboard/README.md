@@ -6,6 +6,16 @@ This project was bootstrapped with [Create React App](https://github.com/faceboo
 
 In the project directory, you can run:
 
+## South Korea Regional Data Setup
+
+To enable South Korea regional rows (시도별 확진/신규/사망), configure data.go.kr env variables:
+
+1. Copy `.env.example` to `.env`
+2. Set `REACT_APP_DATA_GO_KR_SERVICE_KEY` to your data.go.kr decoding key
+3. Restart the dev server after updating `.env`
+
+If the key is missing or invalid, the dashboard falls back to global/country data and Korea regional rows can be empty.
+
 ### `npm start`
 
 Runs the app in the development mode.\
