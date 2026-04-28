@@ -55,6 +55,29 @@
   color: #9c5d00;
   border-color: rgba(255, 152, 0, 0.36);
 }
+
+.source-toggle-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.source-toggle-btn {
+  border: 1px solid #c5cbd3;
+  background: #ffffff;
+  color: #334155;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.source-toggle-btn.active {
+  border-color: #334155;
+  background: #334155;
+  color: #ffffff;
+}
   
   /* Controls Section */
   .dashboard-controls {

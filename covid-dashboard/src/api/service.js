@@ -112,6 +112,19 @@ const parseWhoGlobalCsv = (csvText) => {
   const countryRows = latestRows.filter((row) => String(row[idxCode] || '').trim() && String(row[idxCode] || '').trim() !== 'OWID_WRL');
   if (countryRows.length === 0) return null;
 
+  const latestDateObj = new Date(latestDate);
+  const rollingWindowStart = new Date(latestDateObj);
+  rollingWindowStart.setDate(rollingWindowStart.getDate() - 27);
+
+  const rolling28Rows = rows.filter((row) => {
+    const code = String(row[idxCode] || '').trim();
+    if (!code || code === 'OWID_WRL') return false;
+    const dateText = String(row[idxDate] || '').trim();
+    const dateObj = new Date(dateText);
+    if (Number.isNaN(dateObj.getTime())) return false;
+    return dateObj >= rollingWindowStart && dateObj <= latestDateObj;
+  });
+
   let totalCases = 0;
   let totalDeaths = 0;
   let totalNewCases = 0;
@@ -122,11 +135,14 @@ const parseWhoGlobalCsv = (csvText) => {
     totalNewCases += toNumber(row[idxNewCases]);
     totalNewDeaths += toNumber(row[idxNewDeaths]);
   });
+  const rollingNewCases28d = rolling28Rows.reduce((sum, row) => sum + toNumber(row[idxNewCases]), 0);
 
   return {
     updated: Date.now(),
     cases: totalCases,
-    todayCases: totalNewCases,
+    todayCases: rollingNewCases28d,
+    todayCasesDaily: totalNewCases,
+    rollingNewCases28d,
     deaths: totalDeaths,
     todayDeaths: totalNewDeaths,
     recovered: 0,

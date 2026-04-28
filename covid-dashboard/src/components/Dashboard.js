@@ -14,6 +14,98 @@ import WorldMap from './charts/WorldMap';
 import KoreaRegionalMap from './charts/KoreaRegionalMap';
 import '../styles/Dashboard.css';
 
+const parseCsvLine = (line) => {
+  const values = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === ',' && !inQuotes) {
+      values.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  values.push(current);
+  return values;
+};
+
+const buildWhoCountryMetricsByIso2 = async () => {
+  const publicBase = String(process.env.PUBLIC_URL || '').replace(/\/$/, '');
+  const publicCsvUrl = `${publicBase}/csv/WHO-COVID-19-global-data.csv`;
+  const primaryWhoCsvUrl = process.env.REACT_APP_WHO_GLOBAL_CSV_URL || publicCsvUrl;
+  const candidates = [primaryWhoCsvUrl, publicCsvUrl, '/csv/WHO-COVID-19-global-data.csv']
+    .filter((value, index, self) => Boolean(value) && self.indexOf(value) === index);
+
+  for (let i = 0; i < candidates.length; i += 1) {
+    try {
+      const res = await fetch(candidates[i]);
+      if (!res.ok) continue;
+      const text = (await res.text()).trim().replace(/^\uFEFF/, '');
+      if (!text || text.startsWith('<!DOCTYPE html')) continue;
+      const lines = text.split(/\r?\n/).filter(Boolean);
+      if (lines.length < 2) continue;
+
+      const header = parseCsvLine(lines[0]).map((h) => String(h || '').trim());
+      const idxDate = header.indexOf('Date_reported');
+      const idxCode = header.indexOf('Country_code');
+      const idxCumCases = header.indexOf('Cumulative_cases');
+      const idxCumDeaths = header.indexOf('Cumulative_deaths');
+      const idxNewCases = header.indexOf('New_cases');
+      if ([idxDate, idxCode, idxCumCases, idxCumDeaths, idxNewCases].some((idx) => idx < 0)) continue;
+
+      const rows = lines.slice(1).map((line) => parseCsvLine(line));
+      const latestDate = rows.reduce((maxDate, row) => {
+        const date = String(row[idxDate] || '').trim();
+        return date > maxDate ? date : maxDate;
+      }, '');
+      if (!latestDate) continue;
+
+      const latestDateObj = new Date(latestDate);
+      const startObj = new Date(latestDateObj);
+      startObj.setDate(startObj.getDate() - 27);
+
+      const rolling28Map = new Map();
+      const latestTotalsMap = new Map();
+      rows.forEach((row) => {
+        const code = String(row[idxCode] || '').trim().toUpperCase();
+        if (!code || code === 'OWID_WRL') return;
+        const dateText = String(row[idxDate] || '').trim();
+        const dateObj = new Date(dateText);
+        if (Number.isNaN(dateObj.getTime())) return;
+        if (dateObj < startObj || dateObj > latestDateObj) return;
+        const value = Number(row[idxNewCases] || 0);
+        rolling28Map.set(code, (rolling28Map.get(code) || 0) + (Number.isFinite(value) ? value : 0));
+      });
+
+      rows.forEach((row) => {
+        const code = String(row[idxCode] || '').trim().toUpperCase();
+        if (!code || code === 'OWID_WRL') return;
+        const dateText = String(row[idxDate] || '').trim();
+        if (dateText !== latestDate) return;
+        const cases = Number(row[idxCumCases] || 0);
+        const deaths = Number(row[idxCumDeaths] || 0);
+        latestTotalsMap.set(code, {
+          cases: Number.isFinite(cases) ? cases : 0,
+          deaths: Number.isFinite(deaths) ? deaths : 0
+        });
+      });
+      return { rolling28Map, latestTotalsMap, latestDate };
+    } catch (error) {
+      // try next
+    }
+  }
+  return { rolling28Map: new Map(), latestTotalsMap: new Map(), latestDate: '' };
+};
+
 const Dashboard = () => {
   const MENU_TITLE_MAP = {
     '#dashboard': 'Covid-19',
@@ -26,6 +118,9 @@ const Dashboard = () => {
   const [historicalData, setHistoricalData] = useState(null);
   const [historicalCountriesData, setHistoricalCountriesData] = useState([]);
   const [koreaRegionalData, setKoreaRegionalData] = useState([]);
+  const [whoCountryRolling28Map, setWhoCountryRolling28Map] = useState(new Map());
+  const [whoCountryLatestTotalsMap, setWhoCountryLatestTotalsMap] = useState(new Map());
+  const [whoLatestDate, setWhoLatestDate] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   
@@ -33,8 +128,10 @@ const Dashboard = () => {
   const [selectedCountry, setSelectedCountry] = useState('Global');
   const [timeRange, setTimeRange] = useState('30');
   const [activeMetric, setActiveMetric] = useState('cases');
-  const [sortKey, setSortKey] = useState('currentInfectionRateValue');
+  const [sortKey, setSortKey] = useState('newConfirmed');
   const [isRefreshingTable, setIsRefreshingTable] = useState(false);
+  const [isSwitchingSource, setIsSwitchingSource] = useState(false);
+  const [sourceMode, setSourceMode] = useState('who');
   const [dateRange, setDateRange] = useState({
     from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     to: new Date().toISOString().split('T')[0]
@@ -48,55 +145,100 @@ const Dashboard = () => {
     return ['s. korea', 'south korea', 'korea', 'kr'].includes(name);
   }, [selectedCountry]);
 
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        setLoading(true);
-        const [globalResult, countriesResult] = await Promise.all([
-          fetchGlobalData(),
-          fetchCountriesData()
-        ]);
-        
-        setGlobalData(globalResult);
-        setCountriesData(countriesResult);
-        setCurrentData(globalResult); // Default to global data
-        setLoading(false);
-
-        // Load non-critical datasets in background so main dashboard is not blocked.
-        fetchHistoricalData()
-          .then((historicalResult) => setHistoricalData(historicalResult))
-          .catch(() => setHistoricalData(null));
-
-        fetchHistoricalCountriesData(2)
-          .then((historicalCountriesResult) => {
-            setHistoricalCountriesData(Array.isArray(historicalCountriesResult) ? historicalCountriesResult : []);
-          })
-          .catch(() => setHistoricalCountriesData([]));
-
-        fetchKoreaRegionalData()
-          .then((koreaRegionalResult) => {
-            setKoreaRegionalData(Array.isArray(koreaRegionalResult) ? koreaRegionalResult : []);
-          })
-          .catch(() => setKoreaRegionalData([]));
-      } catch (err) {
-        setError('Failed to load Pandemic data. Please try again later.');
-        setLoading(false);
+  const refreshAllData = async ({ blocking = false } = {}) => {
+    if (blocking) setLoading(true);
+    setError(null);
+    try {
+      const [globalResult, countriesResult] = await Promise.all([
+        fetchGlobalData(),
+        fetchCountriesData()
+      ]);
+      setGlobalData(globalResult);
+      setCountriesData(countriesResult);
+      if (selectedCountry === 'Global') {
+        setCurrentData(globalResult);
       }
-    };
-    
-    loadData();
+
+      const [historicalResult, historicalCountriesResult, koreaRegionalResult, whoMetricsResult] = await Promise.all([
+        fetchHistoricalData().catch(() => null),
+        fetchHistoricalCountriesData(30).catch(() => []),
+        fetchKoreaRegionalData().catch(() => []),
+        buildWhoCountryMetricsByIso2().catch(() => ({ rolling28Map: new Map(), latestTotalsMap: new Map(), latestDate: '' }))
+      ]);
+
+      setHistoricalData(historicalResult);
+      setHistoricalCountriesData(Array.isArray(historicalCountriesResult) ? historicalCountriesResult : []);
+      setKoreaRegionalData(Array.isArray(koreaRegionalResult) ? koreaRegionalResult : []);
+      setWhoCountryRolling28Map(whoMetricsResult?.rolling28Map instanceof Map ? whoMetricsResult.rolling28Map : new Map());
+      setWhoCountryLatestTotalsMap(whoMetricsResult?.latestTotalsMap instanceof Map ? whoMetricsResult.latestTotalsMap : new Map());
+      setWhoLatestDate(String(whoMetricsResult?.latestDate || ''));
+    } catch (err) {
+      setError('Failed to load Pandemic data. Please try again later.');
+    } finally {
+      if (blocking) setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshAllData({ blocking: true });
   }, []);
+
+  const handleSourceModeChange = async (nextMode) => {
+    if (!nextMode || nextMode === sourceMode) return;
+    setIsSwitchingSource(true);
+    setSourceMode(nextMode);
+    await refreshAllData({ blocking: false });
+    setIsSwitchingSource(false);
+  };
   
   useEffect(() => {
-    if (selectedCountry === 'Global' && globalData) {
-      setCurrentData(globalData);
-    } else if (countriesData.length > 0) {
-      const countryData = countriesData.find(c => c.country === selectedCountry);
+    const useWho = sourceMode === 'who';
+    const nextGlobal = useWho
+      ? (whoCountryLatestTotalsMap.size > 0
+        ? {
+          updated: Date.now(),
+          cases: Array.from(whoCountryLatestTotalsMap.values()).reduce((sum, item) => sum + Number(item?.cases || 0), 0),
+          deaths: Array.from(whoCountryLatestTotalsMap.values()).reduce((sum, item) => sum + Number(item?.deaths || 0), 0),
+          recovered: 0,
+          active: 0,
+          source: 'who-csv',
+          sourceDate: whoLatestDate
+        }
+        : globalData)
+      : globalData;
+    const nextCountries = useWho
+      ? countriesData
+        .map((country) => {
+          const iso2 = String(country?.countryInfo?.iso2 || '').toUpperCase();
+          const totals = iso2 ? whoCountryLatestTotalsMap.get(iso2) : null;
+          const rolling28 = iso2 ? whoCountryRolling28Map.get(iso2) : null;
+          if (!totals || !Number.isFinite(Number(rolling28))) return null;
+          return {
+            ...country,
+            cases: Number(totals.cases || 0),
+            todayCases: Number(rolling28 || 0),
+            deaths: Number(totals.deaths || 0),
+            recovered: 0,
+            active: 0,
+            source: 'who-csv',
+            sourceDate: whoLatestDate
+          };
+        })
+        .filter((row) => row && Number(row.cases || 0) > 0)
+      : countriesData;
+
+    if (selectedCountry === 'Global' && nextGlobal) {
+      setCurrentData(nextGlobal);
+    } else if (nextCountries.length > 0) {
+      const countryData = nextCountries.find((c) => c.country === selectedCountry);
       if (countryData) {
         setCurrentData(countryData);
+      } else {
+        setSelectedCountry('Global');
+        setCurrentData(nextGlobal);
       }
     }
-  }, [selectedCountry, globalData, countriesData]);
+  }, [selectedCountry, sourceMode, globalData, countriesData, whoCountryLatestTotalsMap, whoCountryRolling28Map, whoLatestDate]);
 
   useEffect(() => {
     const applyMenuPrefixFromHash = () => {
@@ -161,8 +303,8 @@ const Dashboard = () => {
     setIsRefreshingTable(true);
     try {
       const [latestCountries, latestHistoricalCountries] = await Promise.all([
-        fetchCountriesData(),
-        fetchHistoricalCountriesData(2)
+          fetchCountriesData(),
+          fetchHistoricalCountriesData(30)
       ]);
       setCountriesData(latestCountries);
       setHistoricalCountriesData(Array.isArray(latestHistoricalCountries) ? latestHistoricalCountries : []);
@@ -179,7 +321,7 @@ const Dashboard = () => {
     return num?.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",") || "N/A";
   };
 
-  const getLatestDailyIncrement = (timeline) => {
+  const getRollingIncrement = (timeline, days = 28) => {
     if (!timeline || typeof timeline !== 'object') return null;
     const entries = Object.entries(timeline)
       .map(([date, value]) => ({
@@ -190,9 +332,11 @@ const Dashboard = () => {
       .sort((a, b) => a.date - b.date);
 
     if (entries.length < 2) return null;
-    const latest = entries[entries.length - 1].value;
-    const previous = entries[entries.length - 2].value;
-    return Math.max(0, latest - previous);
+    const latestIndex = entries.length - 1;
+    const baselineIndex = Math.max(0, latestIndex - days);
+    const latestValue = entries[latestIndex].value;
+    const baselineValue = entries[baselineIndex].value;
+    return Math.max(0, latestValue - baselineValue);
   };
 
   const formatCompactNumber = (value) => {
@@ -223,7 +367,28 @@ const Dashboard = () => {
   };
   
   const mapDataWithDerivedMetrics = useMemo(() => {
-    return countriesData.map((country) => ({
+    const sourceCountries = sourceMode === 'who'
+      ? countriesData
+        .map((country) => {
+          const iso2 = String(country?.countryInfo?.iso2 || '').toUpperCase();
+          const totals = iso2 ? whoCountryLatestTotalsMap.get(iso2) : null;
+          const rolling28 = iso2 ? whoCountryRolling28Map.get(iso2) : null;
+          if (!totals || !Number.isFinite(Number(rolling28))) return null;
+          return {
+            ...country,
+            cases: Number(totals.cases || 0),
+            todayCases: Number(rolling28 || 0),
+            deaths: Number(totals.deaths || 0),
+            recovered: 0,
+            active: 0,
+            source: 'who-csv',
+            sourceDate: whoLatestDate
+          };
+        })
+        .filter((row) => row && Number(row.cases || 0) > 0)
+      : countriesData;
+
+    return sourceCountries.map((country) => ({
       ...country,
       caseFatalityRate: country?.cases > 0
         ? (Number(country.deaths || 0) / Number(country.cases || 0)) * 100
@@ -232,17 +397,88 @@ const Dashboard = () => {
         ? (Number(country.active || 0) / Number(country.population || 0)) * 100
         : 0
     }));
-  }, [countriesData]);
+  }, [sourceMode, countriesData, whoCountryLatestTotalsMap, whoCountryRolling28Map, whoLatestDate]);
+
+  const whoGlobalData = useMemo(() => {
+    if (whoCountryLatestTotalsMap.size === 0) return null;
+    let totalCases = 0;
+    let totalDeaths = 0;
+    whoCountryLatestTotalsMap.forEach((value) => {
+      totalCases += Number(value?.cases || 0);
+      totalDeaths += Number(value?.deaths || 0);
+    });
+    let rollingNewCases28d = 0;
+    whoCountryRolling28Map.forEach((value) => {
+      rollingNewCases28d += Number(value || 0);
+    });
+    return {
+      updated: Date.now(),
+      cases: totalCases,
+      todayCases: rollingNewCases28d,
+      rollingNewCases28d,
+      deaths: totalDeaths,
+      recovered: 0,
+      active: 0,
+      tests: 0,
+      source: 'who-csv',
+      sourceDate: whoLatestDate
+    };
+  }, [whoCountryLatestTotalsMap, whoCountryRolling28Map, whoLatestDate]);
+
+  const effectiveGlobalData = useMemo(() => {
+    if (sourceMode === 'who') return whoGlobalData || globalData;
+    return globalData;
+  }, [sourceMode, whoGlobalData, globalData]);
+
+  const effectiveCountriesData = useMemo(() => {
+    if (sourceMode !== 'who') return countriesData;
+    return countriesData
+      .map((country) => {
+        const iso2 = String(country?.countryInfo?.iso2 || '').toUpperCase();
+        if (!iso2) return null;
+        const totals = whoCountryLatestTotalsMap.get(iso2);
+        const rolling28 = whoCountryRolling28Map.get(iso2);
+        if (!totals || !Number.isFinite(Number(rolling28))) return null;
+        return {
+          ...country,
+          cases: Number(totals.cases || 0),
+          todayCases: Number(rolling28 || 0),
+          deaths: Number(totals.deaths || 0),
+          recovered: 0,
+          active: 0,
+          source: 'who-csv',
+          sourceDate: whoLatestDate
+        };
+      })
+      .filter((row) => row && Number(row.cases || 0) > 0);
+  }, [sourceMode, countriesData, whoCountryLatestTotalsMap, whoCountryRolling28Map, whoLatestDate]);
 
   const countryYesterdayCasesMap = useMemo(() => {
     const map = new Map();
     historicalCountriesData.forEach((item) => {
       if (!item?.country || !item?.timeline?.cases) return;
-      const increment = getLatestDailyIncrement(item.timeline.cases);
+      const increment = getRollingIncrement(item.timeline.cases, 28);
       map.set(String(item.country).toLowerCase(), increment);
     });
     return map;
   }, [historicalCountriesData]);
+
+  const countryRolling28Map = useMemo(() => {
+    const useWhoOnly = sourceMode === 'who';
+    const map = new Map();
+    effectiveCountriesData.forEach((country) => {
+      const key = String(country?.country || '').toLowerCase();
+      const iso2 = String(country?.countryInfo?.iso2 || '').toUpperCase();
+      const whoValue = iso2 ? whoCountryRolling28Map.get(iso2) : null;
+      const diseaseValue = countryYesterdayCasesMap.get(key);
+      if (Number.isFinite(Number(whoValue))) {
+        map.set(key, Number(whoValue));
+      } else if (!useWhoOnly && Number.isFinite(Number(diseaseValue))) {
+        map.set(key, Number(diseaseValue));
+      }
+    });
+    return map;
+  }, [sourceMode, effectiveCountriesData, whoCountryRolling28Map, countryYesterdayCasesMap]);
 
   const countryDailyStatsMap = useMemo(() => {
     const map = new Map();
@@ -264,9 +500,9 @@ const Dashboard = () => {
   const mapDataWithYesterdayMetrics = useMemo(() => {
     return mapDataWithDerivedMetrics.map((country) => ({
       ...country,
-      yesterdayCases: countryYesterdayCasesMap.get(String(country.country || '').toLowerCase()) ?? 0
+      yesterdayCases: countryRolling28Map.get(String(country.country || '').toLowerCase()) ?? 0
     }));
-  }, [mapDataWithDerivedMetrics, countryYesterdayCasesMap]);
+  }, [mapDataWithDerivedMetrics, countryRolling28Map]);
 
   const yesterdayGlobalCasesStats = useMemo(() => {
     return getLatestIncrementAndRate(historicalData?.cases);
@@ -278,14 +514,19 @@ const Dashboard = () => {
 
   const displayedNewCases = useMemo(() => {
     if (selectedCountry === 'Global' || selectedCountry === 'all') {
+      const globalSource = sourceMode === 'who' ? 'who-csv' : String(effectiveGlobalData?.source || '').toLowerCase();
+      if (globalSource === 'who-csv') {
+        const whoRolling = Number(effectiveGlobalData?.rollingNewCases28d ?? effectiveGlobalData?.todayCases);
+        return Number.isFinite(whoRolling) ? whoRolling : null;
+      }
       return yesterdayGlobalCasesStats.increment;
     }
 
     const selectedCountryName = String(selectedCountry || '').toLowerCase();
-    const countryYesterday = countryYesterdayCasesMap.get(selectedCountryName);
+    const countryYesterday = countryRolling28Map.get(selectedCountryName);
     if (Number.isFinite(countryYesterday) && countryYesterday >= 0) return countryYesterday;
     return null;
-  }, [selectedCountry, yesterdayGlobalCasesStats, countryYesterdayCasesMap]);
+  }, [selectedCountry, sourceMode, effectiveGlobalData, yesterdayGlobalCasesStats, countryRolling28Map]);
 
   const displayedCasesPercent = useMemo(() => {
     if (selectedCountry === 'Global' || selectedCountry === 'all') {
@@ -304,7 +545,7 @@ const Dashboard = () => {
   }, [selectedCountry, yesterdayGlobalDeathsStats, countryDailyStatsMap]);
 
   const displayedActiveCases = useMemo(() => {
-    const source = String(globalData?.source || '').toLowerCase();
+    const source = sourceMode === 'who' ? 'who-csv' : String(effectiveGlobalData?.source || '').toLowerCase();
     const isGlobalSelection = selectedCountry === 'Global' || selectedCountry === 'all';
     if (isGlobalSelection && source === 'who-csv') {
       return null;
@@ -315,12 +556,12 @@ const Dashboard = () => {
       return null;
     }
     return active;
-  }, [selectedCountry, currentData, globalData]);
+  }, [selectedCountry, currentData, sourceMode, effectiveGlobalData]);
 
   const globalDistribution = useMemo(() => {
-    const active = Number(globalData?.active || 0);
-    const recovered = Number(globalData?.recovered || 0);
-    const deaths = Number(globalData?.deaths || 0);
+    const active = Number(effectiveGlobalData?.active || 0);
+    const recovered = Number(effectiveGlobalData?.recovered || 0);
+    const deaths = Number(effectiveGlobalData?.deaths || 0);
     const total = active + recovered + deaths;
     if (total <= 0) return [];
 
@@ -332,7 +573,7 @@ const Dashboard = () => {
       ...item,
       percent: (item.value / total) * 100
     }));
-  }, [globalData]);
+  }, [effectiveGlobalData]);
 
   // Top 10 countries by active metric
   const topCountries = [...mapDataWithYesterdayMetrics]
@@ -340,32 +581,37 @@ const Dashboard = () => {
     .slice(0, 10);
 
   const rankedCountries = useMemo(() => {
-    const computedRows = [...countriesData]
+    const useWhoOnly = sourceMode === 'who';
+    const computedRows = [...effectiveCountriesData]
       .filter((country) =>
         country &&
-        Number.isFinite(country.cases) &&
-        country.cases > 0 &&
         Number.isFinite(country.population) &&
         country.population > 0
       )
-      .sort((a, b) => b.cases - a.cases)
+      .sort((a, b) => Number(b.cases || 0) - Number(a.cases || 0))
       .slice(0, 25)
       .map((country, index) => {
-        const cases = Number(country.cases || 0);
+        const iso2 = String(country?.countryInfo?.iso2 || '').toUpperCase();
+        const whoTotals = iso2 ? whoCountryLatestTotalsMap.get(iso2) : null;
+        const cases = useWhoOnly && whoTotals ? Number(whoTotals.cases || 0) : Number(country.cases || 0);
         const population = Number(country.population || 0);
-        const active = Number(country.active || 0);
-        const recoveredFromApi = Number(country.recovered || 0);
-        const deaths = Number(country.deaths || 0);
-        const hasReliableRecoveryData = recoveredFromApi > 0;
+        const active = useWhoOnly ? null : Number(country.active || 0);
+        const recoveredFromApi = useWhoOnly ? 0 : Number(country.recovered || 0);
+        const deaths = useWhoOnly && whoTotals ? Number(whoTotals.deaths || 0) : Number(country.deaths || 0);
+        const hasReliableRecoveryData = !useWhoOnly && recoveredFromApi > 0;
         const recovered = recoveredFromApi > 0
           ? recoveredFromApi
-          : Math.max(0, cases - active - deaths);
+          : Math.max(0, cases - Number(active || 0) - deaths);
+
+        const newConfirmed = countryRolling28Map.get(String(country.country || '').toLowerCase()) ?? null;
+        const hasCsvCoreData = !useWhoOnly || (newConfirmed !== null && cases > 0);
+        if (!hasCsvCoreData) return null;
 
         return {
           rank: index + 1,
           country: country.country,
           cases,
-          newConfirmed: countryYesterdayCasesMap.get(String(country.country || '').toLowerCase()) ?? null,
+          newConfirmed,
           currentInfectionCases: active,
           deaths,
           infectionRateValue: population > 0 ? (cases / population) * 100 : 0,
@@ -377,7 +623,8 @@ const Dashboard = () => {
             : null,
           deathRateValue: cases > 0 ? (deaths / cases) * 100 : 0
         };
-      });
+      })
+      .filter(Boolean);
 
     const sortableRows = [...computedRows];
 
@@ -406,7 +653,7 @@ const Dashboard = () => {
         currentInfectionRate: country.currentInfectionRateValue !== null ? country.currentInfectionRateValue.toFixed(2) : 'N/A',
         deathRate: country.deathRateValue.toFixed(2)
       }));
-  }, [countriesData, sortKey, countryYesterdayCasesMap]);
+  }, [sourceMode, effectiveCountriesData, sortKey, countryRolling28Map, whoCountryLatestTotalsMap]);
 
   const koreaRegionalRows = useMemo(() => {
     return [...koreaRegionalData]
@@ -417,17 +664,21 @@ const Dashboard = () => {
   const selectedCountryRow = useMemo(() => {
     if (!currentData || selectedCountry === 'Global' || selectedCountry === 'all') return null;
 
-    const cases = Number(currentData?.cases || 0);
+    const useWhoOnly = sourceMode === 'who';
+    const iso2 = String(currentData?.countryInfo?.iso2 || '').toUpperCase();
+    const whoTotals = iso2 ? whoCountryLatestTotalsMap.get(iso2) : null;
+    const cases = useWhoOnly && whoTotals ? Number(whoTotals.cases || 0) : Number(currentData?.cases || 0);
     const population = Number(currentData?.population || 0);
-    const active = Number(currentData?.active || 0);
-    const recoveredFromApi = Number(currentData?.recovered || 0);
-    const deaths = Number(currentData?.deaths || 0);
-    const hasReliableRecoveryData = recoveredFromApi > 0;
+    const active = useWhoOnly ? null : Number(currentData?.active || 0);
+    const recoveredFromApi = useWhoOnly ? 0 : Number(currentData?.recovered || 0);
+    const deaths = useWhoOnly && whoTotals ? Number(whoTotals.deaths || 0) : Number(currentData?.deaths || 0);
+    const hasReliableRecoveryData = !useWhoOnly && recoveredFromApi > 0;
     const recovered = recoveredFromApi > 0
       ? recoveredFromApi
-      : Math.max(0, cases - active - deaths);
+      : Math.max(0, cases - Number(active || 0) - deaths);
     const selectedCountryName = String(selectedCountry || '').toLowerCase();
-    const yesterdayCases = countryYesterdayCasesMap.get(selectedCountryName) ?? null;
+    const yesterdayCases = countryRolling28Map.get(selectedCountryName) ?? null;
+    if (useWhoOnly && (yesterdayCases === null || cases <= 0)) return null;
 
     const infectionRateValue = population > 0 ? (cases / population) * 100 : null;
     const recoveryRateValue = hasReliableRecoveryData && cases > 0 ? (recovered / cases) * 100 : null;
@@ -445,19 +696,19 @@ const Dashboard = () => {
       deaths,
       deathRateValue
     };
-  }, [currentData, selectedCountry, countryYesterdayCasesMap]);
+  }, [currentData, selectedCountry, countryRolling28Map, sourceMode, whoCountryLatestTotalsMap]);
 
   const globalSourceLabel = useMemo(() => {
-    const source = String(globalData?.source || 'disease.sh').toLowerCase();
+    const source = sourceMode === 'who' ? 'who-csv' : String(effectiveGlobalData?.source || 'disease.sh').toLowerCase();
     if (source === 'who-csv') return 'WHO';
     return 'disease.sh';
-  }, [globalData]);
+  }, [sourceMode, effectiveGlobalData]);
 
   const globalSourceDateLabel = useMemo(() => {
     if (globalSourceLabel !== 'WHO') return '';
-    const sourceDate = String(globalData?.sourceDate || '').trim();
+    const sourceDate = String(effectiveGlobalData?.sourceDate || '').trim();
     return sourceDate ? ` (${sourceDate})` : '';
-  }, [globalData, globalSourceLabel]);
+  }, [effectiveGlobalData, globalSourceLabel]);
 
   const koreaSourceDateLabel = useMemo(() => {
     if (!isSouthKoreaSelected) return '';
@@ -500,6 +751,24 @@ const Dashboard = () => {
           <span className={`global-source-badge source-${globalSourceLabel.replace('.', '-')}`}>
             Global source: {globalSourceLabel}{globalSourceDateLabel}
           </span>
+          <div className="source-toggle-group">
+            <button
+              type="button"
+              className={`source-toggle-btn ${sourceMode === 'who' ? 'active' : ''}`}
+              onClick={() => handleSourceModeChange('who')}
+              disabled={isSwitchingSource}
+            >
+              WHO
+            </button>
+            <button
+              type="button"
+              className={`source-toggle-btn ${sourceMode === 'disease' ? 'active' : ''}`}
+              onClick={() => handleSourceModeChange('disease')}
+              disabled={isSwitchingSource}
+            >
+              disease.sh
+            </button>
+          </div>
         </div>
       </div>
       
@@ -508,7 +777,7 @@ const Dashboard = () => {
           <label>Select Country:</label>
           <select value={selectedCountry} onChange={handleCountryChange}>
             <option value="Global">Global</option>
-            {countriesData.map(country => (
+            {effectiveCountriesData.map(country => (
               <option key={country.country} value={country.country}>
                 {country.country}
               </option>
@@ -539,7 +808,7 @@ const Dashboard = () => {
             {displayedNewCases !== null ? formatNumber(displayedNewCases) : 'N/A'}
           </div>
           <div className="stat-change neutral">
-            New confirmed
+            Last 28 days
           </div>
         </button>
 
@@ -642,12 +911,7 @@ const Dashboard = () => {
 
         {isSouthKoreaSelected && (
           <div className="chart-card korea-regional-table-card">
-            <div className="section-title-row">
-              <h3>South Korea Regional Cases</h3>
-              <span className="global-source-badge source-kr-api">
-                대한민국 시, 도별 데이터: {koreaSourceDateDisplay}
-              </span>
-            </div>
+            <h3>South Korea Regional Cases</h3>
             {koreaRegionalRows.length === 0 && (
               <p className="korea-regional-empty-note">
                 No regional rows returned from data.go.kr. Check REACT_APP_DATA_GO_KR_SERVICE_KEY and restart the dev server after updating .env.
@@ -744,7 +1008,7 @@ const Dashboard = () => {
       </div>
       
       <div className="dashboard-footer">
-        <p>Data source: Global {globalSourceLabel}, country-level disease.sh API.</p>
+        <p>Data source: {sourceMode === 'who' ? 'WHO CSV only' : 'disease.sh only'}.</p>
         <p className="disclaimer">
           Note: Values refresh from live API responses and may change frequently.
         </p>
