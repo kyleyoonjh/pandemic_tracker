@@ -159,6 +159,20 @@
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+.pertussis-image-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pertussis-image {
+  width: 100%;
+  display: block;
+  border-radius: 10px;
+  border: 1px solid #dbe4f3;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.08);
+}
   
   /* Controls Section */
   .dashboard-controls {

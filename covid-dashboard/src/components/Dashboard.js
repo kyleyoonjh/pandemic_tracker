@@ -14,6 +14,9 @@ import WorldMap from './charts/WorldMap';
 import KoreaRegionalMap from './charts/KoreaRegionalMap';
 import '../styles/Dashboard.css';
 
+const WHO_CACHE_KEY = 'who-country-metrics-v1';
+const WHO_CACHE_TTL_MS = 15 * 60 * 1000;
+
 const parseCsvLine = (line) => {
   const values = [];
   let current = '';
@@ -39,6 +42,28 @@ const parseCsvLine = (line) => {
 };
 
 const buildWhoCountryMetricsByIso2 = async () => {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const cachedRaw = window.localStorage.getItem(WHO_CACHE_KEY);
+      if (cachedRaw) {
+        const cached = JSON.parse(cachedRaw);
+        const ts = Number(cached?.ts || 0);
+        const isFresh = Date.now() - ts < WHO_CACHE_TTL_MS;
+        const rollingEntries = Array.isArray(cached?.rolling28) ? cached.rolling28 : [];
+        const totalsEntries = Array.isArray(cached?.totals) ? cached.totals : [];
+        if (isFresh && (rollingEntries.length > 0 || totalsEntries.length > 0)) {
+          return {
+            rolling28Map: new Map(rollingEntries),
+            latestTotalsMap: new Map(totalsEntries),
+            latestDate: String(cached?.latestDate || '')
+          };
+        }
+      }
+    }
+  } catch (error) {
+    // ignore cache read errors
+  }
+
   const publicBase = String(process.env.PUBLIC_URL || '').replace(/\/$/, '');
   const publicCsvUrl = `${publicBase}/csv/WHO-COVID-19-global-data.csv`;
   const primaryWhoCsvUrl = process.env.REACT_APP_WHO_GLOBAL_CSV_URL || publicCsvUrl;
@@ -98,6 +123,18 @@ const buildWhoCountryMetricsByIso2 = async () => {
           deaths: Number.isFinite(deaths) ? deaths : 0
         });
       });
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          window.localStorage.setItem(WHO_CACHE_KEY, JSON.stringify({
+            ts: Date.now(),
+            latestDate,
+            rolling28: Array.from(rolling28Map.entries()),
+            totals: Array.from(latestTotalsMap.entries())
+          }));
+        }
+      } catch (error) {
+        // ignore cache write errors
+      }
       return { rolling28Map, latestTotalsMap, latestDate };
     } catch (error) {
       // try next
@@ -109,7 +146,7 @@ const buildWhoCountryMetricsByIso2 = async () => {
 const Dashboard = () => {
   const MENU_TITLE_MAP = {
     '#dashboard': 'Covid-19',
-    '#about': 'Flu A,B',
+    '#about': '백일해',
     '#resources': 'AI Agent'
   };
 
@@ -137,7 +174,9 @@ const Dashboard = () => {
     to: new Date().toISOString().split('T')[0]
   });
   const [menuPrefix, setMenuPrefix] = useState(MENU_TITLE_MAP['#dashboard']);
-  const [activeMenuHash, setActiveMenuHash] = useState('#dashboard');
+  const [activeMenuHash, setActiveMenuHash] = useState(
+    typeof window !== 'undefined' ? (window.location.hash || '#dashboard') : '#dashboard'
+  );
   const [chatMessages, setChatMessages] = useState([
     { role: 'assistant', content: 'Hi! Ask anything about pandemic trends or this dashboard.' }
   ]);
@@ -186,14 +225,26 @@ const Dashboard = () => {
   };
 
   useEffect(() => {
+    if (activeMenuHash !== '#dashboard') {
+      setLoading(false);
+      return;
+    }
     refreshAllData({ blocking: true });
-  }, []);
+  }, [activeMenuHash]);
+
+  useEffect(() => {
+    if (activeMenuHash !== '#dashboard') return;
+    if (globalData || countriesData.length > 0) return;
+    refreshAllData({ blocking: true });
+  }, [activeMenuHash, globalData, countriesData]);
 
   const handleSourceModeChange = async (nextMode) => {
     if (!nextMode || nextMode === sourceMode) return;
     setIsSwitchingSource(true);
     setSourceMode(nextMode);
-    await refreshAllData({ blocking: false });
+    if (activeMenuHash === '#dashboard') {
+      await refreshAllData({ blocking: false });
+    }
     setIsSwitchingSource(false);
   };
   
@@ -258,6 +309,8 @@ const Dashboard = () => {
     return () => window.removeEventListener('hashchange', applyMenuPrefixFromHash);
   }, []);
   const isAiAgentView = activeMenuHash === '#resources';
+  const isPertussisView = activeMenuHash === '#about';
+  const headerTitle = isAiAgentView ? menuPrefix : `${menuPrefix} Pandemic Dashboard`;
 
   const handleAskAgent = async () => {
     const content = String(chatInput || '').trim();
@@ -351,21 +404,10 @@ const Dashboard = () => {
     });
   };
 
-  const handleSortByColumn = async (columnKey) => {
+  const handleSortByColumn = (columnKey) => {
     setIsRefreshingTable(true);
-    try {
-      const [latestCountries, latestHistoricalCountries] = await Promise.all([
-          fetchCountriesData(),
-          fetchHistoricalCountriesData(30)
-      ]);
-      setCountriesData(latestCountries);
-      setHistoricalCountriesData(Array.isArray(latestHistoricalCountries) ? latestHistoricalCountries : []);
-      setSortKey(columnKey);
-    } catch (fetchError) {
-      console.error('Failed to refresh countries data before sorting:', fetchError);
-    } finally {
-      setIsRefreshingTable(false);
-    }
+    setSortKey(columnKey);
+    window.setTimeout(() => setIsRefreshingTable(false), 80);
   };
   
   // Format number with commas
@@ -739,7 +781,7 @@ const Dashboard = () => {
   return (
     <div className="dashboard-container">
       <div className="dashboard-header">
-        <h1>{menuPrefix} Pandemic Dashboard</h1>
+        <h1>{headerTitle}</h1>
         <div className="last-updated">
           Last updated: {new Date().toLocaleDateString()}
           <span className={`global-source-badge source-${globalSourceLabel.replace('.', '-')}`}>
@@ -753,14 +795,6 @@ const Dashboard = () => {
               disabled={isSwitchingSource}
             >
               WHO
-            </button>
-            <button
-              type="button"
-              className={`source-toggle-btn ${sourceMode === 'disease' ? 'active' : ''}`}
-              onClick={() => handleSourceModeChange('disease')}
-              disabled={isSwitchingSource}
-            >
-              disease.sh
             </button>
           </div>
         </div>
@@ -804,6 +838,11 @@ const Dashboard = () => {
               Send
             </button>
           </div>
+        </div>
+      ) : isPertussisView ? (
+        <div className="pertussis-image-stack">
+          <img src="/image/1012.jpg" alt="Pertussis report 1012" className="pertussis-image" />
+          <img src="/image/1011.jpg" alt="Pertussis report 1011" className="pertussis-image" />
         </div>
       ) : (
       <>
