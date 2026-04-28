@@ -339,15 +339,6 @@ const Dashboard = () => {
     return Math.max(0, latestValue - baselineValue);
   };
 
-  const formatCompactNumber = (value) => {
-    const num = Number(value || 0);
-    if (!Number.isFinite(num)) return '0';
-    if (num >= 1000000000) return `${(num / 1000000000).toFixed(1)}B`;
-    if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
-    if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
-    return `${Math.round(num)}`;
-  };
-
   const getLatestIncrementAndRate = (timeline) => {
     if (!timeline || typeof timeline !== 'object') return { increment: null, rate: null };
     const entries = Object.entries(timeline)
@@ -558,23 +549,6 @@ const Dashboard = () => {
     return active;
   }, [selectedCountry, currentData, sourceMode, effectiveGlobalData]);
 
-  const globalDistribution = useMemo(() => {
-    const active = Number(effectiveGlobalData?.active || 0);
-    const recovered = Number(effectiveGlobalData?.recovered || 0);
-    const deaths = Number(effectiveGlobalData?.deaths || 0);
-    const total = active + recovered + deaths;
-    if (total <= 0) return [];
-
-    return [
-      { label: 'Active', value: active, color: '#4e79a7' },
-      { label: 'Recovered', value: recovered, color: '#f28e2b' },
-      { label: 'Deaths', value: deaths, color: '#e15759' }
-    ].map((item) => ({
-      ...item,
-      percent: (item.value / total) * 100
-    }));
-  }, [effectiveGlobalData]);
-
   // Top 10 countries by active metric
   const topCountries = [...mapDataWithYesterdayMetrics]
     .sort((a, b) => (Number(b[activeMetric] || 0) - Number(a[activeMetric] || 0)))
@@ -594,14 +568,7 @@ const Dashboard = () => {
         const iso2 = String(country?.countryInfo?.iso2 || '').toUpperCase();
         const whoTotals = iso2 ? whoCountryLatestTotalsMap.get(iso2) : null;
         const cases = useWhoOnly && whoTotals ? Number(whoTotals.cases || 0) : Number(country.cases || 0);
-        const population = Number(country.population || 0);
-        const active = useWhoOnly ? null : Number(country.active || 0);
-        const recoveredFromApi = useWhoOnly ? 0 : Number(country.recovered || 0);
         const deaths = useWhoOnly && whoTotals ? Number(whoTotals.deaths || 0) : Number(country.deaths || 0);
-        const hasReliableRecoveryData = !useWhoOnly && recoveredFromApi > 0;
-        const recovered = recoveredFromApi > 0
-          ? recoveredFromApi
-          : Math.max(0, cases - Number(active || 0) - deaths);
 
         const newConfirmed = countryRolling28Map.get(String(country.country || '').toLowerCase()) ?? null;
         const hasCsvCoreData = !useWhoOnly || (newConfirmed !== null && cases > 0);
@@ -612,15 +579,7 @@ const Dashboard = () => {
           country: country.country,
           cases,
           newConfirmed,
-          currentInfectionCases: active,
           deaths,
-          infectionRateValue: population > 0 ? (cases / population) * 100 : 0,
-          recoveryRateValue: hasReliableRecoveryData && cases > 0
-            ? (recovered / cases) * 100
-            : null,
-          currentInfectionRateValue: hasReliableRecoveryData && population > 0
-            ? (active / population) * 100
-            : null,
           deathRateValue: cases > 0 ? (deaths / cases) * 100 : 0
         };
       })
@@ -648,9 +607,6 @@ const Dashboard = () => {
       .map((country, index) => ({
         ...country,
         rank: index + 1,
-        infectionRate: country.infectionRateValue.toFixed(2),
-        recoveryRate: country.recoveryRateValue !== null ? country.recoveryRateValue.toFixed(2) : 'N/A',
-        currentInfectionRate: country.currentInfectionRateValue !== null ? country.currentInfectionRateValue.toFixed(2) : 'N/A',
         deathRate: country.deathRateValue.toFixed(2)
       }));
   }, [sourceMode, effectiveCountriesData, sortKey, countryRolling28Map, whoCountryLatestTotalsMap]);
@@ -668,31 +624,17 @@ const Dashboard = () => {
     const iso2 = String(currentData?.countryInfo?.iso2 || '').toUpperCase();
     const whoTotals = iso2 ? whoCountryLatestTotalsMap.get(iso2) : null;
     const cases = useWhoOnly && whoTotals ? Number(whoTotals.cases || 0) : Number(currentData?.cases || 0);
-    const population = Number(currentData?.population || 0);
-    const active = useWhoOnly ? null : Number(currentData?.active || 0);
-    const recoveredFromApi = useWhoOnly ? 0 : Number(currentData?.recovered || 0);
     const deaths = useWhoOnly && whoTotals ? Number(whoTotals.deaths || 0) : Number(currentData?.deaths || 0);
-    const hasReliableRecoveryData = !useWhoOnly && recoveredFromApi > 0;
-    const recovered = recoveredFromApi > 0
-      ? recoveredFromApi
-      : Math.max(0, cases - Number(active || 0) - deaths);
     const selectedCountryName = String(selectedCountry || '').toLowerCase();
     const yesterdayCases = countryRolling28Map.get(selectedCountryName) ?? null;
     if (useWhoOnly && (yesterdayCases === null || cases <= 0)) return null;
 
-    const infectionRateValue = population > 0 ? (cases / population) * 100 : null;
-    const recoveryRateValue = hasReliableRecoveryData && cases > 0 ? (recovered / cases) * 100 : null;
-    const currentInfectionRateValue = hasReliableRecoveryData && population > 0 ? (active / population) * 100 : null;
     const deathRateValue = cases > 0 ? (deaths / cases) * 100 : null;
 
     return {
       country: currentData?.country || selectedCountry,
       cases,
       newConfirmed: yesterdayCases,
-      infectionRateValue,
-      recoveryRateValue,
-      currentInfectionCases: active,
-      currentInfectionRateValue,
       deaths,
       deathRateValue
     };
@@ -883,10 +825,6 @@ const Dashboard = () => {
                     <th>Country</th>
                     <th>Cases</th>
                     <th>New Confirmed</th>
-                    <th>Infection Rate</th>
-                    <th>Recovery Rate</th>
-                    <th>Current Infection Cases</th>
-                    <th>Current Infection Rate</th>
                     <th>Deaths</th>
                     <th>Death Rate</th>
                   </tr>
@@ -896,10 +834,6 @@ const Dashboard = () => {
                     <td>{selectedCountryRow.country}</td>
                     <td>{formatNumber(selectedCountryRow.cases)}</td>
                     <td>{selectedCountryRow.newConfirmed !== null ? formatNumber(selectedCountryRow.newConfirmed) : 'N/A'}</td>
-                    <td>{selectedCountryRow.infectionRateValue !== null ? `${selectedCountryRow.infectionRateValue.toFixed(2)}%` : 'N/A'}</td>
-                    <td>{selectedCountryRow.recoveryRateValue !== null ? `${selectedCountryRow.recoveryRateValue.toFixed(2)}%` : 'N/A'}</td>
-                    <td>{formatNumber(selectedCountryRow.currentInfectionCases)}</td>
-                    <td>{selectedCountryRow.currentInfectionRateValue !== null ? `${selectedCountryRow.currentInfectionRateValue.toFixed(2)}%` : 'N/A'}</td>
                     <td>{formatNumber(selectedCountryRow.deaths)}</td>
                     <td>{selectedCountryRow.deathRateValue !== null ? `${selectedCountryRow.deathRateValue.toFixed(2)}%` : 'N/A'}</td>
                   </tr>
@@ -943,19 +877,15 @@ const Dashboard = () => {
         )}
 
         <div className="chart-card map-table-card">
-          <h3>Countries Ranked by Current Infection Rate {isRefreshingTable ? '(Refreshing...)' : ''}</h3>
+          <h3>Top Countries {isRefreshingTable ? '(Refreshing...)' : ''}</h3>
           <div className="countries-table-wrapper">
             <table className="countries-table">
               <thead>
                 <tr>
-                  <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('currentInfectionRateValue')} disabled={isRefreshingTable}>Rank</button></th>
+                  <th>Rank</th>
                   <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('country')} disabled={isRefreshingTable}>Country</button></th>
                   <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('cases')} disabled={isRefreshingTable}>Cases</button></th>
                   <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('newConfirmed')} disabled={isRefreshingTable}>New Confirmed</button></th>
-                  <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('infectionRateValue')} disabled={isRefreshingTable}>Infection Rate</button></th>
-                  <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('recoveryRateValue')} disabled={isRefreshingTable}>Recovery Rate</button></th>
-                  <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('currentInfectionCases')} disabled={isRefreshingTable}>Current Infection Cases</button></th>
-                  <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('currentInfectionRateValue')} disabled={isRefreshingTable}>Current Infection Rate</button></th>
                   <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('deaths')} disabled={isRefreshingTable}>Deaths</button></th>
                   <th><button type="button" className="sort-header-button" onClick={() => handleSortByColumn('deathRateValue')} disabled={isRefreshingTable}>Death Rate</button></th>
                 </tr>
@@ -967,10 +897,6 @@ const Dashboard = () => {
                     <td>{country.country}</td>
                     <td>{formatNumber(country.cases)}</td>
                     <td>{country.newConfirmed !== null ? formatNumber(country.newConfirmed) : 'N/A'}</td>
-                    <td>{country.infectionRate}%</td>
-                    <td>{country.recoveryRate === 'N/A' ? 'N/A' : `${country.recoveryRate}%`}</td>
-                    <td>{formatNumber(country.currentInfectionCases)}</td>
-                    <td>{country.currentInfectionRate === 'N/A' ? 'N/A' : `${country.currentInfectionRate}%`}</td>
                     <td>{formatNumber(country.deaths)}</td>
                     <td>{country.deathRate}%</td>
                   </tr>
@@ -979,36 +905,10 @@ const Dashboard = () => {
             </table>
           </div>
         </div>
-        
-        <div className="chart-card global-distribution-card">
-          <h3>Global Distribution</h3>
-          <div className="distribution-list">
-            {globalDistribution.map((item) => (
-              <div className="distribution-row" key={item.label}>
-                <div className="distribution-row-header">
-                  <div className="distribution-label-wrap">
-                    <span className="distribution-dot" style={{ backgroundColor: item.color }}></span>
-                    <span className="distribution-label">{item.label}</span>
-                  </div>
-                  <div className="distribution-values">
-                    <span className="distribution-percent">{item.percent.toFixed(2)}%</span>
-                    <span className="distribution-count">({formatCompactNumber(item.value)})</span>
-                  </div>
-                </div>
-                <div className="distribution-track">
-                  <div
-                    className="distribution-fill"
-                    style={{ width: `${item.percent}%`, backgroundColor: item.color }}
-                  ></div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
       
       <div className="dashboard-footer">
-        <p>Data source: {sourceMode === 'who' ? 'WHO CSV only' : 'disease.sh only'}.</p>
+        <p>Data source: {sourceMode === 'who' ? 'WHO' : 'disease.sh only'}.</p>
         <p className="disclaimer">
           Note: Values refresh from live API responses and may change frequently.
         </p>
