@@ -110,7 +110,7 @@ const Dashboard = () => {
   const MENU_TITLE_MAP = {
     '#dashboard': 'Covid-19',
     '#about': 'Flu A,B',
-    '#resources': 'MFox'
+    '#resources': 'AI Agent'
   };
 
   const [globalData, setGlobalData] = useState(null);
@@ -137,6 +137,12 @@ const Dashboard = () => {
     to: new Date().toISOString().split('T')[0]
   });
   const [menuPrefix, setMenuPrefix] = useState(MENU_TITLE_MAP['#dashboard']);
+  const [activeMenuHash, setActiveMenuHash] = useState('#dashboard');
+  const [chatMessages, setChatMessages] = useState([
+    { role: 'assistant', content: 'Hi! Ask anything about pandemic trends or this dashboard.' }
+  ]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
   
   // Current data based on selection
   const [currentData, setCurrentData] = useState(null);
@@ -243,6 +249,7 @@ const Dashboard = () => {
   useEffect(() => {
     const applyMenuPrefixFromHash = () => {
       const currentHash = window.location.hash || '#dashboard';
+      setActiveMenuHash(currentHash);
       setMenuPrefix(MENU_TITLE_MAP[currentHash] || 'Covid-19');
     };
 
@@ -250,6 +257,51 @@ const Dashboard = () => {
     window.addEventListener('hashchange', applyMenuPrefixFromHash);
     return () => window.removeEventListener('hashchange', applyMenuPrefixFromHash);
   }, []);
+  const isAiAgentView = activeMenuHash === '#resources';
+
+  const handleAskAgent = async () => {
+    const content = String(chatInput || '').trim();
+    if (!content || chatLoading) return;
+
+    const nextMessages = [...chatMessages, { role: 'user', content }];
+    setChatMessages(nextMessages);
+    setChatInput('');
+    setChatLoading(true);
+    try {
+      const response = await fetch('/api/ai-agent-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: nextMessages.slice(-12)
+        })
+      });
+      if (!response.ok) {
+        let reason = 'AI request failed.';
+        try {
+          const errorBody = await response.json();
+          reason = errorBody?.error || reason;
+        } catch (error) {
+          try {
+            const rawError = await response.text();
+            if (rawError) reason = rawError;
+          } catch (readError) {
+            // keep fallback message
+          }
+        }
+        throw new Error(reason);
+      }
+      const result = await response.json();
+      const answer = String(result?.answer || '').trim() || 'No response from AI.';
+      setChatMessages((prev) => [...prev, { role: 'assistant', content: answer }]);
+    } catch (error) {
+      setChatMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: `Error: ${error.message || 'Unable to reach AI service.'}` }
+      ]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
   
   const handleCountryChange = (e) => {
     setSelectedCountry(e.target.value);
@@ -713,7 +765,48 @@ const Dashboard = () => {
           </div>
         </div>
       </div>
-      
+      {isAiAgentView ? (
+        <div className="chart-card ai-agent-card">
+          <h3>AI Agent</h3>
+          <div className="ai-chat-window">
+            {chatMessages.map((message, index) => (
+              <div key={`${message.role}-${index}`} className={`ai-chat-row ${message.role}`}>
+                <div className="ai-chat-bubble">{message.content}</div>
+              </div>
+            ))}
+            {chatLoading && (
+              <div className="ai-chat-row assistant">
+                <div className="ai-chat-bubble">Thinking...</div>
+              </div>
+            )}
+          </div>
+          <div className="ai-chat-input-row">
+            <input
+              type="text"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleAskAgent();
+                }
+              }}
+              placeholder="Ask the AI agent..."
+              disabled={chatLoading}
+              className="ai-chat-input"
+            />
+            <button
+              type="button"
+              onClick={handleAskAgent}
+              disabled={chatLoading || !String(chatInput || '').trim()}
+              className="ai-chat-send-btn"
+            >
+              Send
+            </button>
+          </div>
+        </div>
+      ) : (
+      <>
       <div className="dashboard-controls">
         <div className="country-selector">
           <label>Select Country:</label>
@@ -913,6 +1006,8 @@ const Dashboard = () => {
           Note: Values refresh from live API responses and may change frequently.
         </p>
       </div>
+      </>
+      )}
     </div>
   );
 };

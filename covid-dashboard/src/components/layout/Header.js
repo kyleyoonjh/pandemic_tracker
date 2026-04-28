@@ -24,7 +24,7 @@ const Header = () => {
         <nav className="nav-links">
           <a href="#dashboard" className="nav-link active">Covid-19</a>
           <a href="#about" className="nav-link">Flu A,B</a>
-          <a href="#resources" className="nav-link">MFox</a>
+          <a href="#resources" className="nav-link">AI Agent</a>
         </nav>
         
         <div className="header-actions">
