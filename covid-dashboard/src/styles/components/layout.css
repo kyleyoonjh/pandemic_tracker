@@ -345,7 +345,13 @@ background: none;
   }
   
   .nav-links {
-    display: none;
+    display: flex;
+    gap: 0.35rem;
+  }
+
+  .nav-link {
+    padding: 0.35rem 0.45rem;
+    font-size: 0.82rem;
   }
   
   .logo-text {
@@ -362,11 +368,11 @@ background: none;
 /* Responsive adjustments */
 @media (max-width: 992px) {
   .nav-links {
-    display: none;
+    display: flex;
   }
   
   .mobile-menu-button {
-    display: flex;
+    display: none;
   }
   
   .header-actions {
