@@ -17,8 +17,16 @@ import '../styles/Dashboard.css';
 const WHO_CACHE_KEY = 'who-country-metrics-v1';
 const WHO_CACHE_TTL_MS = 15 * 60 * 1000;
 const AI_REQUEST_TIMEOUT_MS = 30000;
+const ENABLE_PUTER_GROK = String(process.env.REACT_APP_ENABLE_PUTER_GROK || 'false').toLowerCase() === 'true';
+const PUTER_GROK_MODEL = String(process.env.REACT_APP_PUTER_GROK_MODEL || 'x-ai/grok-4.20');
+const AI_PROVIDER_OPTIONS = [
+  { id: 'groq', label: 'Llama4' },
+  { id: 'gemini', label: 'Gemini' },
+  { id: 'openai', label: 'GPT' },
+  { id: 'puter-grok', label: 'Grok' }
+];
 const WHO_MOCK_OPENING_MESSAGE = [
-  '2026년 4월 4일 기준 전 세계 코로나19 상황은 세계보건기구(WHO)의 최신 보고에 따르면 다음과 같습니다.',
+  '전 세계 코로나19 상황은 세계보건기구(WHO)의 최신 주간 분석에 따르면 다음과 같습니다.',
   '',
   '2026년 4월 5일까지의 28일 동안 전 세계적으로 총 25,201명의 신규 코로나19 확진자가 보고되었으며, 이는 이전 28일 대비 24,596명 감소한 수치입니다. WHO는 2023년 8월 25일부터 회원국에 일일 확진자 및 사망자 보고를 의무화하지 않고 주간 보고를 요청하고 있어, 최신 누적 확진자 및 사망자 수는 WHO 대시보드에서 직접적으로 제공되지 않습니다.',
   '',
@@ -51,6 +59,30 @@ const parseCsvLine = (line) => {
   }
   values.push(current);
   return values;
+};
+
+const askPuterGrok = async (messages) => {
+  const puterChat = window?.puter?.ai?.chat;
+  if (typeof puterChat !== 'function') return null;
+  const timeoutPromise = new Promise((_, reject) => {
+    window.setTimeout(() => reject(new Error('Puter Grok timeout')), AI_REQUEST_TIMEOUT_MS);
+  });
+  const result = await Promise.race([
+    puterChat(messages, { model: PUTER_GROK_MODEL }),
+    timeoutPromise
+  ]);
+  const answer = String(
+    result?.message?.content
+    || result?.content
+    || result?.text
+    || ''
+  ).trim();
+  return answer || null;
+};
+
+const canUsePuterGrok = () => {
+  const hasPuterSdk = typeof window !== 'undefined' && typeof window?.puter?.ai?.chat === 'function';
+  return ENABLE_PUTER_GROK || hasPuterSdk;
 };
 
 const buildWhoCountryMetricsByIso2 = async () => {
@@ -198,8 +230,7 @@ const Dashboard = () => {
   ]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
-  const hasRequestedWhoBriefRef = useRef(false);
-  const whoBriefInFlightRef = useRef(false);
+  const [selectedAiProvider, setSelectedAiProvider] = useState('groq');
   
   // Current data based on selection
   const [currentData, setCurrentData] = useState(null);
@@ -332,14 +363,13 @@ const Dashboard = () => {
 
   useEffect(() => {
     if (!isAiAgentView) return;
-    hasRequestedWhoBriefRef.current = true;
-    whoBriefInFlightRef.current = false;
     setChatMessages((prev) => {
       const hasMock = prev.some(
-        (msg) => msg?.role === 'assistant' && msg?.provider === 'system' && String(msg?.content || '').includes('2026년 4월 4일 기준')
+        (msg) => msg?.role === 'assistant' && msg?.provider === 'system' && String(msg?.content || '').includes('세계보건기구(WHO)의 최신 주간 분석')
       );
-      if (hasMock) return prev;
-      return [{ role: 'assistant', provider: 'system', content: WHO_MOCK_OPENING_MESSAGE }, ...prev];
+      const prepend = [];
+      if (!hasMock) prepend.unshift({ role: 'assistant', provider: 'system', content: WHO_MOCK_OPENING_MESSAGE });
+      return prepend.length > 0 ? [...prepend, ...prev] : prev;
     });
   }, [isAiAgentView]);
 
@@ -352,6 +382,24 @@ const Dashboard = () => {
     setChatInput('');
     setChatLoading(true);
     try {
+      if (selectedAiProvider === 'puter-grok') {
+        if (!canUsePuterGrok()) {
+          setChatMessages((prev) => [
+            ...prev,
+            { role: 'assistant', provider: 'system', content: 'Puter Grok을 사용할 수 없습니다. 브라우저에서 Puter 로그인/SDK 로드 상태를 확인해 주세요.' }
+          ]);
+          return;
+        }
+        try {
+          const puterAnswer = await askPuterGrok(nextMessages.slice(-12));
+          if (puterAnswer) {
+            setChatMessages((prev) => [...prev, { role: 'assistant', content: puterAnswer, provider: 'puter-grok' }]);
+            return;
+          }
+        } catch (puterError) {
+          // fall back to existing backend provider chain
+        }
+      }
       const controller = new AbortController();
       const timeoutId = window.setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
       const response = await fetch('/api/ai-agent-chat', {
@@ -359,7 +407,8 @@ const Dashboard = () => {
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
         body: JSON.stringify({
-          messages: nextMessages.slice(-12)
+          messages: nextMessages.slice(-12),
+          requestedProvider: selectedAiProvider
         })
       });
       window.clearTimeout(timeoutId);
@@ -393,9 +442,10 @@ const Dashboard = () => {
       }
     } catch (error) {
       const isTimeout = String(error?.name || '').toLowerCase() === 'aborterror';
+      const cleanedError = normalizeAiErrorMessage(error?.message || 'Unable to reach AI service.');
       setChatMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: isTimeout ? 'Error: AI 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.' : `Error: ${error.message || 'Unable to reach AI service.'}` }
+        { role: 'assistant', content: isTimeout ? 'AI 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.' : cleanedError }
       ]);
     } finally {
       setChatLoading(false);
@@ -404,10 +454,21 @@ const Dashboard = () => {
 
   const getProviderLabel = (provider) => {
     const value = String(provider || '').toLowerCase();
+    if (value.includes('puter') || value.includes('grok')) return 'Grok';
+    if (value.includes('groq') || value.includes('llama')) return 'Llama4';
     if (value.includes('openai') || value.includes('gpt')) return 'GPT';
     if (value.includes('gemini')) return 'Gemini';
     if (value === 'system') return 'System';
     return 'AI';
+  };
+
+  const normalizeAiErrorMessage = (rawMessage) => {
+    const message = String(rawMessage || '').trim();
+    if (!message) return '요청 처리 중 오류가 발생했습니다.';
+    return message
+      .replace(/^Error:\s*/i, '')
+      .replace(/^AI provider error:\s*/i, '')
+      .trim();
   };
   
   const handleCountryChange = (e) => {
@@ -874,6 +935,21 @@ const Dashboard = () => {
                 <div className="ai-chat-bubble">Thinking...</div>
               </div>
             )}
+          </div>
+          <div className="ai-chat-input-row">
+            <div className="ai-provider-selector" role="group" aria-label="AI provider selector">
+              {AI_PROVIDER_OPTIONS.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={`ai-provider-select-btn ${selectedAiProvider === option.id ? 'active' : ''}`}
+                  onClick={() => setSelectedAiProvider(option.id)}
+                  disabled={chatLoading}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="ai-chat-input-row">
             <input

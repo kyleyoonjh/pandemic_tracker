@@ -153,6 +153,13 @@
   border-color: rgba(67, 160, 71, 0.35);
 }
 
+.ai-provider-badge.provider-llama4,
+.ai-provider-badge.provider-grok {
+  background: rgba(124, 58, 237, 0.14);
+  color: #6d28d9;
+  border-color: rgba(124, 58, 237, 0.35);
+}
+
 .ai-provider-badge.provider-system {
   background: rgba(122, 132, 153, 0.16);
   color: #4b5563;
@@ -162,6 +169,30 @@
 .ai-chat-input-row {
   display: flex;
   gap: 8px;
+}
+
+.ai-provider-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.ai-provider-select-btn {
+  border: 1px solid #ccd6ea;
+  background: #fff;
+  color: #334155;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ai-provider-select-btn.active {
+  border-color: #4454b8;
+  background: #4454b8;
+  color: #fff;
 }
 
 .ai-chat-input {
