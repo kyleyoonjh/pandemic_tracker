@@ -1,5 +1,5 @@
 // src/components/Dashboard.js
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 //import { fetchGlobalData, fetchCountriesData, fetchHistoricalData } from '../api/service';
 import {
   fetchGlobalData,
@@ -16,6 +16,18 @@ import '../styles/Dashboard.css';
 
 const WHO_CACHE_KEY = 'who-country-metrics-v1';
 const WHO_CACHE_TTL_MS = 15 * 60 * 1000;
+const AI_REQUEST_TIMEOUT_MS = 30000;
+const WHO_MOCK_OPENING_MESSAGE = [
+  '2026년 4월 4일 기준 전 세계 코로나19 상황은 세계보건기구(WHO)의 최신 보고에 따르면 다음과 같습니다.',
+  '',
+  '2026년 4월 5일까지의 28일 동안 전 세계적으로 총 25,201명의 신규 코로나19 확진자가 보고되었으며, 이는 이전 28일 대비 24,596명 감소한 수치입니다. WHO는 2023년 8월 25일부터 회원국에 일일 확진자 및 사망자 보고를 의무화하지 않고 주간 보고를 요청하고 있어, 최신 누적 확진자 및 사망자 수는 WHO 대시보드에서 직접적으로 제공되지 않습니다.',
+  '',
+  '미국의 경우, 4월 4일로 마감된 주간 동안 코로나19 활동은 전국적으로 매우 낮은 수준을 유지했으며, 하수 역학 조사에서도 대부분의 주에서 바이러스 활동 수준이 낮거나 매우 낮은 것으로 나타났습니다. 네브래스카주에서는 4월 4일로 마감된 주간에 2,259건의 코로나19 검사가 실시되었고, 이 중 61건이 양성으로 확인되어 양성률은 2.7%를 기록했습니다.',
+  '',
+  '출처: WHO COVID-19 대시보드 (WHO COVID-19 dashboard)',
+  '',
+  '코로나 상황이나 WHO 관련해서 더 확인하고 싶은 내용이 있으시면, 편하게 질문해 주세요.'
+].join('\n');
 
 const parseCsvLine = (line) => {
   const values = [];
@@ -147,7 +159,7 @@ const Dashboard = () => {
   const MENU_TITLE_MAP = {
     '#dashboard': 'Covid-19',
     '#about': '백일해',
-    '#resources': 'AI Agent'
+    '#resources': 'Seegene AI'
   };
 
   const [globalData, setGlobalData] = useState(null);
@@ -178,10 +190,16 @@ const Dashboard = () => {
     typeof window !== 'undefined' ? (window.location.hash || '#dashboard') : '#dashboard'
   );
   const [chatMessages, setChatMessages] = useState([
-    { role: 'assistant', content: 'Hi! Ask anything about pandemic trends or this dashboard.' }
+    {
+      role: 'assistant',
+      provider: 'system',
+      content: WHO_MOCK_OPENING_MESSAGE
+    }
   ]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
+  const hasRequestedWhoBriefRef = useRef(false);
+  const whoBriefInFlightRef = useRef(false);
   
   // Current data based on selection
   const [currentData, setCurrentData] = useState(null);
@@ -312,6 +330,19 @@ const Dashboard = () => {
   const isPertussisView = activeMenuHash === '#about';
   const headerTitle = isAiAgentView ? menuPrefix : `${menuPrefix} Pandemic Dashboard`;
 
+  useEffect(() => {
+    if (!isAiAgentView) return;
+    hasRequestedWhoBriefRef.current = true;
+    whoBriefInFlightRef.current = false;
+    setChatMessages((prev) => {
+      const hasMock = prev.some(
+        (msg) => msg?.role === 'assistant' && msg?.provider === 'system' && String(msg?.content || '').includes('2026년 4월 4일 기준')
+      );
+      if (hasMock) return prev;
+      return [{ role: 'assistant', provider: 'system', content: WHO_MOCK_OPENING_MESSAGE }, ...prev];
+    });
+  }, [isAiAgentView]);
+
   const handleAskAgent = async () => {
     const content = String(chatInput || '').trim();
     if (!content || chatLoading) return;
@@ -321,13 +352,17 @@ const Dashboard = () => {
     setChatInput('');
     setChatLoading(true);
     try {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
       const response = await fetch('/api/ai-agent-chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           messages: nextMessages.slice(-12)
         })
       });
+      window.clearTimeout(timeoutId);
       if (!response.ok) {
         let reason = 'AI request failed.';
         try {
@@ -345,15 +380,34 @@ const Dashboard = () => {
       }
       const result = await response.json();
       const answer = String(result?.answer || '').trim() || 'No response from AI.';
-      setChatMessages((prev) => [...prev, { role: 'assistant', content: answer }]);
+      const provider = String(result?.provider || 'gemini').toLowerCase();
+      const fallbackError = String(result?.fallbackError || '').trim();
+      if (provider.includes('openai') && fallbackError) {
+        setChatMessages((prev) => [
+          ...prev,
+          { role: 'assistant', provider: 'system', content: `Gemini 오류로 GPT로 전환되었습니다.\n${fallbackError}` },
+          { role: 'assistant', content: answer, provider }
+        ]);
+      } else {
+        setChatMessages((prev) => [...prev, { role: 'assistant', content: answer, provider }]);
+      }
     } catch (error) {
+      const isTimeout = String(error?.name || '').toLowerCase() === 'aborterror';
       setChatMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: `Error: ${error.message || 'Unable to reach AI service.'}` }
+        { role: 'assistant', content: isTimeout ? 'Error: AI 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.' : `Error: ${error.message || 'Unable to reach AI service.'}` }
       ]);
     } finally {
       setChatLoading(false);
     }
+  };
+
+  const getProviderLabel = (provider) => {
+    const value = String(provider || '').toLowerCase();
+    if (value.includes('openai') || value.includes('gpt')) return 'GPT';
+    if (value.includes('gemini')) return 'Gemini';
+    if (value === 'system') return 'System';
+    return 'AI';
   };
   
   const handleCountryChange = (e) => {
@@ -801,11 +855,18 @@ const Dashboard = () => {
       </div>
       {isAiAgentView ? (
         <div className="chart-card ai-agent-card">
-          <h3>AI Agent</h3>
+          <h3>Seegene AI</h3>
           <div className="ai-chat-window">
             {chatMessages.map((message, index) => (
               <div key={`${message.role}-${index}`} className={`ai-chat-row ${message.role}`}>
-                <div className="ai-chat-bubble">{message.content}</div>
+                <div className="ai-chat-bubble">
+                  {message.content}
+                  {message.role === 'assistant' && (
+                    <div className={`ai-provider-badge provider-${getProviderLabel(message.provider).toLowerCase()}`}>
+                      {getProviderLabel(message.provider)}
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
             {chatLoading && (
@@ -889,9 +950,6 @@ const Dashboard = () => {
         <button type="button" className={`stat-card total-cases metric-card-button ${activeMetric === 'cases' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('cases')}>
           <h3>Total Cases</h3>
           <div className="stat-value">{formatNumber(currentData?.cases)}</div>
-          <div className="stat-change positive">
-            {displayedCasesPercent !== null ? `${displayedCasesPercent.toFixed(2)}%` : 'N/A'} ↑
-          </div>
         </button>
         
         <button type="button" className={`stat-card active-cases metric-card-button ${activeMetric === 'active' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('active')}>
@@ -907,9 +965,6 @@ const Dashboard = () => {
         <button type="button" className={`stat-card deaths metric-card-button ${activeMetric === 'deaths' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('deaths')}>
           <h3>Deaths</h3>
           <div className="stat-value">{formatNumber(currentData?.deaths)}</div>
-          <div className="stat-change positive">
-            {displayedDeathsPercent !== null ? `${displayedDeathsPercent.toFixed(2)}%` : 'N/A'} ↑
-          </div>
         </button>
         
         <button type="button" className={`stat-card case-fatality metric-card-button ${activeMetric === 'caseFatalityRate' ? 'active-metric-card' : ''}`} onClick={() => setActiveMetric('caseFatalityRate')}>

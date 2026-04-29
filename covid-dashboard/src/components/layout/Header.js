@@ -27,35 +27,36 @@ const Header = () => {
   return (
     <header className="header">
       <div className="header-container">
-        <div className="logo">
-          <span className="logo-text">
-            Pandemic Tracker<span className="logo-accent"> Sea-Through</span>
-          </span>
+        <div className="header-start">
+          <div className="compact-menu-wrap">
+            <button
+              type="button"
+              className="compact-menu-button"
+              aria-label="Open navigation menu"
+              onClick={() => setCompactMenuOpen((prev) => !prev)}
+            >
+              Menu
+            </button>
+            {compactMenuOpen && (
+              <div className="compact-menu-dropdown">
+                <a href="#dashboard" className={`compact-menu-link ${activeHash === '#dashboard' ? 'active' : ''}`} onClick={() => setCompactMenuOpen(false)}>Covid-19</a>
+                <a href="#about" className={`compact-menu-link ${activeHash === '#about' ? 'active' : ''}`} onClick={() => setCompactMenuOpen(false)}>백일해</a>
+                <a href="#resources" className={`compact-menu-link ${activeHash === '#resources' ? 'active' : ''}`} onClick={() => setCompactMenuOpen(false)}>Seegene AI</a>
+              </div>
+            )}
+          </div>
+          <div className="logo">
+            <span className="logo-text">
+              Pandemic Tracker<span className="logo-accent"> Sea-Through</span>
+            </span>
+          </div>
         </div>
-        
+
         <nav className="nav-links">
           <a href="#dashboard" className={`nav-link ${activeHash === '#dashboard' ? 'active' : ''}`}>Covid-19</a>
           <a href="#about" className={`nav-link ${activeHash === '#about' ? 'active' : ''}`}>백일해</a>
-          <a href="#resources" className={`nav-link ${activeHash === '#resources' ? 'active' : ''}`}>AI Agent</a>
+          <a href="#resources" className={`nav-link ${activeHash === '#resources' ? 'active' : ''}`}>Seegene AI</a>
         </nav>
-
-        <div className="compact-menu-wrap">
-          <button
-            type="button"
-            className="compact-menu-button"
-            aria-label="Open navigation menu"
-            onClick={() => setCompactMenuOpen((prev) => !prev)}
-          >
-            Menu
-          </button>
-          {compactMenuOpen && (
-            <div className="compact-menu-dropdown">
-              <a href="#dashboard" className={`compact-menu-link ${activeHash === '#dashboard' ? 'active' : ''}`} onClick={() => setCompactMenuOpen(false)}>Covid-19</a>
-              <a href="#about" className={`compact-menu-link ${activeHash === '#about' ? 'active' : ''}`} onClick={() => setCompactMenuOpen(false)}>백일해</a>
-              <a href="#resources" className={`compact-menu-link ${activeHash === '#resources' ? 'active' : ''}`} onClick={() => setCompactMenuOpen(false)}>AI Agent</a>
-            </div>
-          )}
-        </div>
         
         <div className="header-actions">
           <div className="data-source-wrapper">
