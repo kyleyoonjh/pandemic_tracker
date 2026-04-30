@@ -231,6 +231,7 @@ const Dashboard = () => {
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [selectedAiProvider, setSelectedAiProvider] = useState('groq');
+  const chatWindowRef = useRef(null);
   
   // Current data based on selection
   const [currentData, setCurrentData] = useState(null);
@@ -372,6 +373,12 @@ const Dashboard = () => {
       return prepend.length > 0 ? [...prepend, ...prev] : prev;
     });
   }, [isAiAgentView]);
+
+  useEffect(() => {
+    if (!isAiAgentView || !chatWindowRef.current) return;
+    // Keep the latest assistant reply visible without manual scrolling.
+    chatWindowRef.current.scrollTop = chatWindowRef.current.scrollHeight;
+  }, [chatMessages, chatLoading, isAiAgentView]);
 
   const handleAskAgent = async () => {
     const content = String(chatInput || '').trim();
@@ -917,7 +924,7 @@ const Dashboard = () => {
       {isAiAgentView ? (
         <div className="chart-card ai-agent-card">
           <h3>Seegene AI</h3>
-          <div className="ai-chat-window">
+          <div ref={chatWindowRef} className="ai-chat-window">
             {chatMessages.map((message, index) => (
               <div key={`${message.role}-${index}`} className={`ai-chat-row ${message.role}`}>
                 <div className="ai-chat-bubble">

@@ -10,6 +10,7 @@ const WHO_CSV_SOURCE_URL = 'https://raw.githubusercontent.com/kyleyoonjh/pandemi
 const SYSTEM_PROMPT = `당신은 2024-2026년 팬데믹 데이터 분석 전문가입니다.
 항상 CSV 데이터 구조를 기반으로 답변하며,
 전문 용어를 사용하되 친절하게 설명하세요.
+코로나 확진·사망·신규 건수 등 숫자를 묻는 질문은 반드시 이 서비스가 참조하는 WHO CSV(업로드·who_raw 요약 등)에서 도출된 값만 근거로 삼고, CSV에 없는 수치는 추측하거나 임의로 만들지 마세요.
 코로나/covid 관련 질문에서는 누적 확진/사망 및 28일 신규 수치를 항목별로 나열하지 말고, 추세와 해석 중심의 서술형으로 답변하세요.`;
 const COVID_KEYWORDS = ['covid', '코로나', '팬데믹', '확진', '사망', '누적 확진', '누적 사망', 'sars-cov-2'];
 const NON_COVID_TOPICS = ['백일해', 'pertussis'];
@@ -30,7 +31,12 @@ const isWhoFileFresh = () => {
 };
 
 const toNumber = (value) => {
-  const n = Number(String(value ?? '').replace(/,/g, '').trim());
+  const normalized = String(value ?? '')
+    .replace(/[\u00A0\s]/g, '')
+    .replace(/"/g, '')
+    .replace(/,/g, '')
+    .trim();
+  const n = Number(normalized);
   return Number.isFinite(n) ? n : 0;
 };
 
@@ -112,13 +118,33 @@ const getWhoRawSummary = () => {
       latestCases,
       latestDeaths,
       newCases28d,
-      newDeaths28d
+      newDeaths28d,
+      fileMtimeMs: mtimeMs
     };
     whoRawSummaryCache = { mtimeMs, summary };
     return summary;
   } catch (error) {
     return null;
   }
+};
+
+/** 서버가 who_raw에서 합산해 둔 캐시 요약을 모델 컨텍스트에 그대로 넘김 (Groq/OpenAI는 파일 업로드가 없음). */
+const formatWhoRawCacheForPrompt = (summary) => {
+  if (!summary) return '';
+  const mtimeMs = Number(summary.fileMtimeMs || 0);
+  const mtimeLine = mtimeMs ? `캐시 갱신(파일 mtime, UTC): ${new Date(mtimeMs).toISOString()}` : '';
+  return [
+    '--- [서버 who_raw 캐시 — WHO CSV 기준 전세계 합산, 아래 수치만 전역 숫자 근거로 사용] ---',
+    '전 세계 누적·28일 합 등을 묻는 답변에서는 아래 수치를 반드시 근거로 인용·서술하세요. 이 블록에 없는 전역 숫자는 만들지 마세요.',
+    `최신 기준일(Date_reported): ${summary.latestDate}`,
+    `최근 28일 구간: ${summary.fromDate} ~ ${summary.latestDate}`,
+    `전세계 누적 확진(최신일 국가별 합): ${summary.latestCases.toLocaleString('en-US')}`,
+    `전세계 누적 사망(최신일 국가별 합): ${summary.latestDeaths.toLocaleString('en-US')}`,
+    `최근 28일 신규 확진 합: ${summary.newCases28d.toLocaleString('en-US')}`,
+    `최근 28일 신규 사망 합: ${summary.newDeaths28d.toLocaleString('en-US')}`,
+    mtimeLine,
+    '국가별 값은 이 블록에 없음 — 특정 국가 숫자는 동일 CSV 원본(또는 Gemini 업로드 파일)에서 확인.'
+  ].filter(Boolean).join('\n');
 };
 
 const getCountryFileIndex = () => {
@@ -222,12 +248,24 @@ const appendKoreaReferenceLink = (text, useKoreaReference) => {
 
 const appendCsvEvidence = (text, useCsvPriority, whoRawSummary) => {
   const answer = String(text || '').trim();
-  return answer;
+  if (!useCsvPriority || !whoRawSummary) return answer;
+  const canonicalBlock = [
+    '[WHO CSV 기준 수치]',
+    `- 최신 기준일: ${whoRawSummary.latestDate}`,
+    `- 전세계 누적 확진: ${Number(whoRawSummary.latestCases || 0).toLocaleString('en-US')}명`,
+    `- 전세계 누적 사망: ${Number(whoRawSummary.latestDeaths || 0).toLocaleString('en-US')}명`,
+    `- 최근 28일(${whoRawSummary.fromDate}~${whoRawSummary.latestDate}) 신규 확진: ${Number(whoRawSummary.newCases28d || 0).toLocaleString('en-US')}명`,
+    `- 최근 28일 신규 사망: ${Number(whoRawSummary.newDeaths28d || 0).toLocaleString('en-US')}명`
+  ].join('\n');
+  if (!answer) return canonicalBlock;
+  if (answer.includes('[WHO CSV 기준 수치]')) return answer;
+  return `${answer}\n\n${canonicalBlock}`;
 };
 
-const stripModelNumericClaims = (text, useCsvPriority) => {
+/** who_raw 캐시가 프롬프트에 있으면 모델이 수치를 인용한 답을 유지해야 하므로 스트립하지 않음 */
+const stripModelNumericClaims = (text, stripNumericLines) => {
   const raw = String(text || '').trim();
-  if (!useCsvPriority || !raw) return raw;
+  if (!stripNumericLines || !raw) return raw;
   const cleaned = raw
     .split('\n')
     .map((line) => line.trimEnd())
@@ -455,13 +493,14 @@ module.exports = function setupProxy(app) {
       const csvPriorityText = useCsvPriority
         ? [
             '중요: 한국 이외 코로나 질의는 반드시 로컬 CSV를 1순위 근거로 사용하세요.',
-            whoRawSummary
-              ? `who_raw 최신기준일=${whoRawSummary.latestDate}, 최근28일구간=${whoRawSummary.fromDate}~${whoRawSummary.latestDate}, 전세계 누적/28일 지표가 계산되어 있습니다.`
-              : 'who_raw 요약 계산값을 우선 참조하세요.',
+            whoRawSummary ? formatWhoRawCacheForPrompt(whoRawSummary) : 'who_raw 요약 캐시를 계산하지 못했습니다. 전역 수치 언급은 삼가세요.',
             '국가별 CSV 파일은 사용하지 말고 who_raw만 기준으로 설명하세요.',
-            '숫자 나열보다 변화 방향, 지역별 차이, 해석을 중심으로 서술하세요.'
+            whoRawSummary
+              ? '캐시에 제시된 전역 수치는 답변에서 인용·근거로 사용해도 됩니다. 나열이 아닌 문장으로 풀어쓰기만 하면 됩니다.'
+              : '숫자 나열보다 변화 방향, 지역별 차이, 해석을 중심으로 서술하세요.'
           ].join('\n')
         : '';
+      const stripAnswerNumericLines = useCsvPriority && !whoRawSummary;
       for (const provider of providers) {
         try {
           if (provider === 'groq' && groqApiKey) {
@@ -489,7 +528,7 @@ module.exports = function setupProxy(app) {
                 : (useCsvPriority ? answer : normalizeCovidAnswerStyle(answer, forceWhoRawLookup));
               const finalAnswer = appendKoreaReferenceLink(
                 appendCsvEvidence(
-                  stripMarkdownTables(stripModelNumericClaims(resolvedAnswer, useCsvPriority)),
+                  stripMarkdownTables(stripModelNumericClaims(resolvedAnswer, stripAnswerNumericLines)),
                   useCsvPriority,
                   whoRawSummary
                 ),
@@ -555,7 +594,7 @@ module.exports = function setupProxy(app) {
                 : (useCsvPriority ? answer : normalizeCovidAnswerStyle(answer, forceWhoRawLookup));
               const finalAnswer = appendKoreaReferenceLink(
                 appendCsvEvidence(
-                  stripMarkdownTables(stripModelNumericClaims(resolvedAnswer, useCsvPriority)),
+                  stripMarkdownTables(stripModelNumericClaims(resolvedAnswer, stripAnswerNumericLines)),
                   useCsvPriority,
                   whoRawSummary
                 ),
@@ -589,7 +628,7 @@ module.exports = function setupProxy(app) {
                 : (useCsvPriority ? answer : normalizeCovidAnswerStyle(answer, forceWhoRawLookup));
               const finalAnswer = appendKoreaReferenceLink(
                 appendCsvEvidence(
-                  stripMarkdownTables(stripModelNumericClaims(resolvedAnswer, useCsvPriority)),
+                  stripMarkdownTables(stripModelNumericClaims(resolvedAnswer, stripAnswerNumericLines)),
                   useCsvPriority,
                   whoRawSummary
                 ),

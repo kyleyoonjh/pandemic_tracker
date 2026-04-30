@@ -797,13 +797,17 @@ const WorldMap = ({
   onCountryClick = () => { },
   focusCountry = null
 }) => {
+  const containerRef = useRef();
   const mapRef = useRef();
   const tooltipRef = useRef();
   const [worldData, setWorldData] = useState(null);
   const [selectedCountry, setSelectedCountry] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [containerWidth, setContainerWidth] = useState(width);
   const theme = useSelector(state => state.ui.theme);
+  const renderWidth = Math.max(320, Math.min(width, containerWidth || width));
+  const renderHeight = Math.round((height / width) * renderWidth);
 
   const filteredWorldData = useMemo(() => {
     if (!worldData?.features) return null;
@@ -865,6 +869,22 @@ const WorldMap = ({
       });
   }, []);
 
+  useEffect(() => {
+    if (!containerRef.current) return undefined;
+    const element = containerRef.current;
+
+    const updateWidth = () => {
+      const nextWidth = Math.floor(element.getBoundingClientRect().width || width);
+      setContainerWidth(nextWidth > 0 ? nextWidth : width);
+    };
+
+    updateWidth();
+
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [width]);
+
   // Create memoized map configuration once worldData and data are available
   const mapConfig = useMemo(() => {
     if (!data || !filteredWorldData) return null;
@@ -903,7 +923,7 @@ const WorldMap = ({
       .fitExtent(
         [
           [margin.left + projectionSidePadding, margin.top + projectionTopPadding],
-          [width - margin.right - projectionSidePadding, height - margin.bottom - projectionBottomPadding]
+          [renderWidth - margin.right - projectionSidePadding, renderHeight - margin.bottom - projectionBottomPadding]
         ],
         filteredWorldData
       );
@@ -911,7 +931,7 @@ const WorldMap = ({
     const pathGenerator = d3.geoPath().projection(projection);
 
     return { colorScale, projection, pathGenerator };
-  }, [data, filteredWorldData, width, height, margin, metric, colorRange]);
+  }, [data, filteredWorldData, renderWidth, renderHeight, margin, metric, colorRange]);
 
   useEffect(() => {
     if (!mapConfig || !filteredWorldData || !data) return;
@@ -924,7 +944,11 @@ const WorldMap = ({
 
     // Clear previous contents
     svg.selectAll('*').remove();
-    svg.attr('width', width).attr('height', height);
+    svg
+      .attr('viewBox', `0 0 ${renderWidth} ${renderHeight}`)
+      .attr('preserveAspectRatio', 'xMidYMid meet')
+      .attr('width', '100%')
+      .style('height', 'auto');
 
     // Create main group and attach zoom behavior
     const g = svg.append('g');
@@ -1126,10 +1150,10 @@ const WorldMap = ({
     }
 
     // Add a legend to display the color scale
-    const legendWidth = 200;
+    const legendWidth = Math.min(200, Math.max(120, renderWidth * 0.25));
     const legendHeight = 10;
-    const legendX = width - legendWidth - 20;
-    const legendY = height - 40;
+    const legendX = renderWidth - legendWidth - 20;
+    const legendY = renderHeight - 40;
 
     const legendScale = d3.scaleLinear()
       .domain(colorScale.domain())
@@ -1178,14 +1202,14 @@ const WorldMap = ({
 
     svg.append('text')
       .attr('class', 'map-title')
-      .attr('x', width / 2)
+      .attr('x', renderWidth / 2)
       .attr('y', 30)
       .attr('text-anchor', 'middle')
       .style('font-size', '16px')
       .style('font-weight', 'bold')
       .attr('fill', theme === 'dark' ? '#fff' : '#333')
       .text(`Pandemic ${metricTitle} by Country`);
-  }, [data, width, height, margin, mapConfig, onCountryClick, theme, metric, colorRange, filteredWorldData, focusCountry]);
+  }, [data, renderWidth, renderHeight, margin, mapConfig, onCountryClick, theme, metric, colorRange, filteredWorldData, focusCountry]);
 
   if (isLoading) {
     return <div className="chart-loading">Loading map data...</div>;
@@ -1200,7 +1224,7 @@ const WorldMap = ({
   }
 
   return (
-    <div className="world-map-container">
+    <div ref={containerRef} className="world-map-container">
       <svg ref={mapRef} className="world-map"></svg>
       <div ref={tooltipRef} className="chart-tooltip"></div>
     </div>
