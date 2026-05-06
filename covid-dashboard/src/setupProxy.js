@@ -4,6 +4,8 @@ const fs = require('fs');
 const express = require('express');
 const https = require('https');
 const axios = require('axios');
+const { runAzureWhoAssistantsChat } = require('../api/azure-who-assistants');
+const { shouldForceWhoRawLookup, isDataAccessDenial } = require('../api/who-query-predicates');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const WHO_FILE_TTL_MS = 40 * 60 * 60 * 1000;
 const WHO_CSV_SOURCE_URL = 'https://raw.githubusercontent.com/kyleyoonjh/pandemic_tracker/main/covid-dashboard/csv/WHO-COVID-19-global-data.csv';
@@ -12,8 +14,6 @@ const SYSTEM_PROMPT = `당신은 2024-2026년 팬데믹 데이터 분석 전문�
 전문 용어를 사용하되 친절하게 설명하세요.
 코로나 확진·사망·신규 건수 등 숫자를 묻는 질문은 반드시 이 서비스가 참조하는 WHO CSV(업로드·who_raw 요약 등)에서 도출된 값만 근거로 삼고, CSV에 없는 수치는 추측하거나 임의로 만들지 마세요.
 코로나/covid 관련 질문에서는 누적 확진/사망 및 28일 신규 수치를 항목별로 나열하지 말고, 추세와 해석 중심의 서술형으로 답변하세요.`;
-const COVID_KEYWORDS = ['covid', '코로나', '팬데믹', '확진', '사망', '누적 확진', '누적 사망', 'sars-cov-2'];
-const NON_COVID_TOPICS = ['백일해', 'pertussis'];
 const KOREA_REFERENCE_URL = 'https://dportal.kdca.go.kr/pot/bbs/BD_selectBbs.do?q_bbsSn=1025';
 const KOREA_KEYWORDS = ['한국', '대한민국', 'korea', 'korean', 'kr'];
 let preferredAiProvider = 'groq';
@@ -183,15 +183,6 @@ const resolveCountryFileFromMessages = (safeMessages) => {
   return null;
 };
 
-const shouldForceWhoRawLookup = (safeMessages) => {
-  const latestUserMessage = [...safeMessages].reverse().find((m) => m.role === 'user');
-  const query = String(latestUserMessage?.content || '').toLowerCase();
-  const switchingAwayFromCovid = /코로나\s*말고|covid\s*말고|not\s+covid|instead of covid/i.test(query)
-    || NON_COVID_TOPICS.some((topic) => query.includes(topic));
-  if (switchingAwayFromCovid) return false;
-  return COVID_KEYWORDS.some((keyword) => query.includes(keyword));
-};
-
 const shouldUseKoreaReference = (safeMessages) => {
   const latestUserMessage = [...safeMessages].reverse().find((m) => m.role === 'user');
   const query = ` ${String(latestUserMessage?.content || '').toLowerCase()} `;
@@ -203,21 +194,9 @@ const normalizeRequestedProvider = (rawValue) => {
   if (!value) return '';
   if (value.includes('groq') || value.includes('llama')) return 'groq';
   if (value.includes('gemini')) return 'gemini';
+  if (value.includes('azure')) return 'azure-openai';
   if (value.includes('openai') || value.includes('gpt')) return 'openai';
   return '';
-};
-
-const isDataAccessDenial = (text) => {
-  const lowered = String(text || '').toLowerCase();
-  return (
-    lowered.includes('cannot access') ||
-    lowered.includes('i do not have access') ||
-    lowered.includes('i can\'t access') ||
-    lowered.includes('접근할 수 없') ||
-    lowered.includes('접근할수없') ||
-    lowered.includes('실제 데이터를 제공할 수 없') ||
-    lowered.includes('데이터셋에 접근할 수 없')
-  );
 };
 
 const normalizeCovidAnswerStyle = (text, forceWhoRawLookup) => {
@@ -462,6 +441,14 @@ module.exports = function setupProxy(app) {
       const geminiModel = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
       const openAiApiKey = process.env.OPENAI_API_KEY;
       const openAiModel = process.env.OPENAI_MODEL || 'gpt-4o';
+      const azureApiKey = process.env.AZURE_OPENAI_API_KEY;
+      const azureEndpoint = String(process.env.AZURE_OPENAI_ENDPOINT || '').trim().replace(/\/$/, '');
+      const azureDeployment = String(process.env.AZURE_OPENAI_DEPLOYMENT || '').trim();
+      const azureApiVersion = String(process.env.AZURE_OPENAI_API_VERSION || '2024-05-01-preview').trim();
+      const azureUseFileSearch = String(process.env.AZURE_OPENAI_FILE_SEARCH || 'true').toLowerCase() !== 'false';
+      const azureChatUrl = azureEndpoint && azureDeployment
+        ? `${azureEndpoint}/openai/deployments/${encodeURIComponent(azureDeployment)}/chat/completions?api-version=${encodeURIComponent(azureApiVersion)}`
+        : '';
       const requestedProvider = normalizeRequestedProvider(req.body?.requestedProvider);
       const requestTimeoutMs = Math.max(2000, Number(process.env.GEMINI_TIMEOUT_MS || 10000));
       const insecureSsl = String(process.env.ALLOW_INSECURE_SSL || 'true').toLowerCase() === 'true';
@@ -479,9 +466,24 @@ module.exports = function setupProxy(app) {
         res.status(400).json({ error: 'Requested provider openai is not configured.' });
         return;
       }
+      if (requestedProvider === 'azure-openai' && (!azureApiKey || !azureEndpoint || !azureDeployment)) {
+        const missingAzure = [
+          !azureApiKey && 'AZURE_OPENAI_API_KEY',
+          !azureEndpoint && 'AZURE_OPENAI_ENDPOINT',
+          !azureDeployment && 'AZURE_OPENAI_DEPLOYMENT'
+        ].filter(Boolean);
+        res.status(400).json({
+          error: `Azure OpenAI is not configured. Add to .env (restart npm after saving): ${missingAzure.join(', ') || 'AZURE_OPENAI_*'}. Deployment name must match your Azure portal model deployment.`
+        });
+        return;
+      }
+      if (requestedProvider === 'azure-openai' && !azureUseFileSearch && !azureChatUrl) {
+        res.status(400).json({ error: 'Azure chat completions URL could not be built. Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT.' });
+        return;
+      }
       const providers = requestedProvider
         ? [requestedProvider]
-        : Array.from(new Set([preferredAiProvider, 'groq', 'gemini', 'openai']));
+        : Array.from(new Set([preferredAiProvider, 'groq', 'gemini', 'openai', 'azure-openai']));
       const errors = [];
       const forceWhoRawLookup = shouldForceWhoRawLookup(safeMessages);
       const useKoreaReference = shouldUseKoreaReference(safeMessages);
@@ -638,6 +640,92 @@ module.exports = function setupProxy(app) {
               return;
             }
             throw new Error('OpenAI returned empty answer');
+          }
+
+          if (provider === 'azure-openai' && azureApiKey && azureEndpoint && azureDeployment) {
+            const systemBlock = `${SYSTEM_PROMPT}\n${koreaReferenceText}\n${csvPriorityText}`.trim();
+            let answer = '';
+            let usedAzureAssistants = false;
+
+            if (azureUseFileSearch) {
+              try {
+                const assistantInstructions = `${systemBlock}
+
+[Azure file_search — 필수]
+• 이미 이 어시스턴트에 WHO 글로벌 CSV가 벡터 스토어로 연결되어 있습니다(파일 표시명: WHO-COVID-19-global-data.csv). 사용자가 who.txt라고 불러도 같은 데이터입니다.
+• 반드시 file_search로 해당 파일에서 검색한 뒤 답하세요. 세션에 파일이 “안 보인다”, “업로드해 달라”, “내용을 붙여 달라”고 말하면 안 됩니다 — 데이터는 이미 검색 가능합니다.
+• 열: Date_reported, Country_code, Country_name, WHO_region, New_cases, Cumulative_cases, New_deaths, Cumulative_deaths 등. CSV에 없는 수치는 추측하지 마세요.`.trim();
+                answer = await runAzureWhoAssistantsChat({
+                  endpoint: azureEndpoint,
+                  apiKey: azureApiKey,
+                  apiVersion: azureApiVersion,
+                  deploymentName: azureDeployment,
+                  fullInstructions: assistantInstructions,
+                  safeMessages,
+                  timeoutMs: requestTimeoutMs
+                });
+                if (answer) {
+                  usedAzureAssistants = true;
+                }
+              } catch (assistErr) {
+                errors.push({
+                  provider: 'azure-openai-assistants',
+                  error: assistErr?.message || String(assistErr)
+                });
+              }
+            }
+
+            if (!answer && azureChatUrl) {
+              const azureMessages = [{ role: 'system', content: systemBlock }, ...safeMessages];
+              let azureResponse;
+              try {
+                azureResponse = await axios.post(
+                  azureChatUrl,
+                  { messages: azureMessages, temperature: 0.3 },
+                  {
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'api-key': azureApiKey
+                    },
+                    timeout: requestTimeoutMs,
+                    httpsAgent
+                  }
+                );
+              } catch (azureErr) {
+                const status = azureErr?.response?.status;
+                const payload = azureErr?.response?.data;
+                const inner = payload?.error?.error || payload?.error;
+                const code = inner?.code || payload?.error?.code;
+                if (code === 'DeploymentNotFound' || status === 404) {
+                  throw new Error(
+                    'Azure DeploymentNotFound: 리소스에 해당 배포가 없습니다. Azure Portal → 해당 Azure OpenAI 리소스 → Studio → Deployments에서 배포 이름을 확인하고, covid-dashboard/.env의 AZURE_OPENAI_DEPLOYMENT 값을 그 이름과 완전히 동일하게 수정한 뒤 npm을 재시작하세요. (현재 기본값 gpt-4o가 포털 배포명과 다를 수 있습니다.)'
+                  );
+                }
+                throw azureErr;
+              }
+              answer = String(azureResponse?.data?.choices?.[0]?.message?.content || '').trim();
+            }
+
+            if (answer) {
+              preferredAiProvider = 'azure-openai';
+              const resolvedAnswer = forceWhoRawLookup && isDataAccessDenial(answer)
+                ? '요청하신 데이터 파일을 바탕으로 분석 중입니다. 질문을 조금 더 구체화해 주시면 추세 중심으로 답변드리겠습니다.'
+                : (useCsvPriority ? answer : normalizeCovidAnswerStyle(answer, forceWhoRawLookup));
+              const finalAnswer = appendKoreaReferenceLink(
+                appendCsvEvidence(
+                  stripMarkdownTables(stripModelNumericClaims(resolvedAnswer, stripAnswerNumericLines)),
+                  useCsvPriority,
+                  whoRawSummary
+                ),
+                useKoreaReferenceLink
+              );
+              res.json({
+                answer: finalAnswer,
+                provider: usedAzureAssistants ? 'azure-openai-assistants' : 'azure-openai'
+              });
+              return;
+            }
+            throw new Error('Azure OpenAI returned empty answer');
           }
         } catch (error) {
           errors.push({ provider, error: error?.response?.data || error?.message || 'unknown error' });

@@ -23,6 +23,7 @@ const AI_PROVIDER_OPTIONS = [
   { id: 'groq', label: 'Llama4' },
   { id: 'gemini', label: 'Gemini' },
   { id: 'openai', label: 'GPT' },
+  { id: 'azure-openai', label: 'Azure AI' },
   { id: 'puter-grok', label: 'Grok' }
 ];
 const WHO_MOCK_OPENING_MESSAGE = [
@@ -462,6 +463,7 @@ const Dashboard = () => {
   const getProviderLabel = (provider) => {
     const value = String(provider || '').toLowerCase();
     if (value.includes('puter') || value.includes('grok')) return 'Grok';
+    if (value.includes('azure')) return 'Azure AI';
     if (value.includes('groq') || value.includes('llama')) return 'Llama4';
     if (value.includes('openai') || value.includes('gpt')) return 'GPT';
     if (value.includes('gemini')) return 'Gemini';
